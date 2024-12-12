@@ -1,0 +1,10 @@
+{
+  "name": "js-one",
+  "outputfilename": "js-one",
+  "frontend:install": "",
+  "frontend:build": "",
+  "author": {
+    "name": "Sanjay Nagpal",
+    "email": "nagpal.sanj@gmail.com"
+  }
+}
