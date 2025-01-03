@@ -24,6 +24,7 @@ func TestRootDirectory(t *testing.T) {
 	fmt.Println("--------------------------")
 
 }
+
 func TestCreateSymLink(t *testing.T) {
 	folder := "./testdata/j-2024-11-10"
 	originalFile, err := filepath.Abs(folder)
