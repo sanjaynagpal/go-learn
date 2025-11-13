@@ -7,6 +7,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/pterm/pterm"
 	"github.com/sanjaynagpal/go-learn/waverly/app-auth-client/logger"
+	"golang.org/x/oauth2"
 )
 
 type Common struct {
@@ -19,6 +20,10 @@ type AuthCommand struct {
 	TenantID   string `name:"tenantid" description:"Tenant ID for authentication"`
 	ListenAddr string `name:"listenaddr" description:"Port to run the client on" default:"8080"`
 }
+
+var (
+	oauthConfig *oauth2.Config
+)
 
 // Authentication App
 func AuthApp(cmd *AuthCommand) error {

@@ -28,5 +28,6 @@ require (
 	github.com/pterm/pterm v0.12.82
 	github.com/rs/zerolog v1.34.0
 	github.com/wzshiming/winseq v0.0.0-20200112104235-db357dc107ae // indirect
+	golang.org/x/oauth2 v0.32.0
 	golang.org/x/sys v0.33.0 // indirect
 )
