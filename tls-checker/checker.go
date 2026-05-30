@@ -61,6 +61,10 @@ func main() {
 		"swiskey-execds2.ibb.ubs.com:443",
 		"swiskey-execds3.ibb.ubs.com:443",
 		"swiskey-execds4.ibb.ubs.com:443",
+		"swiskey-execution-ds1-us.ibb.ubs.com:443",
+		"swiskey-execution-ds2-us.ibb.ubs.com:443",
+		"swiskey-execds1-syd.ibb.ubs.com:443",
+		"swiskey-execds2-syd.ibb.ubs.com:443",
 	}
 
 	resultsChan := make(chan Result, len(targets))
