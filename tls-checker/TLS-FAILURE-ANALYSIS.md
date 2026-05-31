@@ -501,3 +501,180 @@ After binding, each vServer should transition to UP and pass the TLS checker tes
 ---
 
 *Appendix: Raw test output available in `ske-ext-endpoint-tls.json` (Go checker run).*
+
+---
+
+## 10. Second Run — 2026-05-30 (Active Remediation in Progress)
+
+A second full probe was run using the Go TLS checker, WSL nc, WSL curl, and WSL openssl.
+Results show the network engineer is actively making changes between runs.
+
+### 10.1 Current Status
+
+| Hostname | IP | TCP 443 | TLS | HTTP | Delta |
+|---|---|---|---|---|---|
+| swiskey-execution.ibb.ubs.com | 139.149.12.214 | OPEN | TLS 1.3 | 302 | unchanged ✓ |
+| swiskey-execds2.ibb.ubs.com | 139.149.12.218 | OPEN | TLS 1.3 | 403 | unchanged ✓ |
+| swiskey-execds4.ibb.ubs.com | 139.149.131.61 | OPEN | TLS 1.3 | 403 | unchanged ✓ |
+| swiskey-execds1-syd.ibb.ubs.com | 138.206.250.193 | OPEN | TLS 1.3 | 403 | **FIXED** ✓ |
+| swiskey-execds2-syd.ibb.ubs.com | 138.206.250.194 | OPEN | TLS 1.3 | 403 | **FIXED** ✓ |
+| swiskey-execds1.ibb.ubs.com | 139.149.12.217 | TIMEOUT | — | — | still failing ✗ |
+| swiskey-execds3.ibb.ubs.com | 139.149.131.60 | TIMEOUT | — | — | still failing ✗ |
+| swiskey-execution-ds1-us.ibb.ubs.com | 151.191.176.160 | TIMEOUT | — | — | still failing ✗ |
+| swiskey-execution-ds2-us.ibb.ubs.com | 148.112.146.150 | TIMEOUT | — | — | **NEW FAILURE** ✗ |
+
+**Progress:** SYD cluster fully resolved. US DS2 newly broken. EU DS1/DS3 and US DS1 still failing.
+**Remaining failures: 4** (down from 5, but pattern has shifted).
+
+### 10.2 New Certificate Detected
+
+The certificate on all currently-passing endpoints has been replaced. The new cert:
+
+| Field | Old (first run) | New (this run) |
+|---|---|---|
+| Not Before | 2025-06-11 | **2026-05-12** |
+| Not After | 2026-06-10 | **2026-11-26** |
+| Issuer | DigiCert Global G2 TLS RSA SHA256 2020 CA1 | unchanged |
+| Key | RSA 2048-bit | unchanged |
+| Added SAN | — | `SWISKEY-EXECUTION-IBB.FALCON.UBS.COM` |
+
+The new certificate was issued 2026-05-12 and covers all nine service hostnames plus the internal
+Citrix CNAME (`swiskey-execution-ibb.falcon.ubs.com`, visible in DNS as the CNAME target for
+`swiskey-execution.ibb.ubs.com`). The certificate is valid and correctly chained on all
+endpoints currently serving it.
+
+**The failing endpoints have not yet received the new certificate binding** — they cannot be
+checked at the TLS layer because TCP connections are still not completing.
+
+### 10.3 Behaviour Change: RST → Timeout on Failing Endpoints
+
+In the first WSL probe run (user's terminal), `swiskey-execds1` returned `Connection refused`
+(TCP RST), indicating its vServer was in INACTIVE state. In this run, all four failing endpoints
+now return `TIMEOUT` from nc — no RST, no reply.
+
+This shift from RST to TIMEOUT suggests the engineer has modified the Citrix configuration
+on those VIPs between runs — likely removing the incomplete vServer configuration as part of
+the reconfiguration process. The VIPs are temporarily in a state with no listener at all
+(timeout) rather than an INACTIVE listener (RST).
+
+### 10.4 Why execution-ds2-us Newly Fails
+
+`swiskey-execution-ds2-us.ibb.ubs.com` (148.112.146.150) was passing in all first-run tests.
+It is now timing out. The most likely cause: the engineer is currently applying the certificate
+change to this vServer and it is temporarily down during the update. This is a transient state.
+
+The pattern of which VIPs are failing is shifting with each probe, consistent with an engineer
+working through the VIPs sequentially.
+
+### 10.5 Remaining Fix Required
+
+Three VIPs still need the certificate binding applied (in addition to execution-ds2-us which
+may already be in progress):
+
+```
+bind ssl vserver <execds1-vserver>         -certkeyName <new-certkey>
+bind ssl vserver <execds3-vserver>         -certkeyName <new-certkey>
+bind ssl vserver <execution-ds1-us-vserver> -certkeyName <new-certkey>
+```
+
+After each bind, verify with:
+```
+show lb vserver <name>   # expect State: UP
+echo | openssl s_client -connect <host>:443 -servername <host> 2>&1 | grep "Not After"
+# expect: Nov 26 23:59:59 2026 GMT
+```
+
+---
+
+## 11. Third Run — 2026-05-30 (Rolling Update Continues)
+
+### 11.1 Current Status
+
+| Hostname | IP | TCP 443 | TLS | Cert Expiry | Delta |
+|---|---|---|---|---|---|
+| swiskey-execution.ibb.ubs.com | 139.149.12.214 | OPEN | TLS 1.3 | Nov 26 2026 | unchanged ✓ |
+| swiskey-execution-ds2-us.ibb.ubs.com | 148.112.146.150 | OPEN | TLS 1.3 | **Jun 10 2026** | **RECOVERED** ✓ |
+| swiskey-execds2.ibb.ubs.com | 139.149.12.218 | TIMEOUT | — | — | **new regression** ✗ |
+| swiskey-execds4.ibb.ubs.com | 139.149.131.61 | TIMEOUT | — | — | **new regression** ✗ |
+| swiskey-execds1-syd.ibb.ubs.com | 138.206.250.193 | TIMEOUT | — | — | flapping ✗ |
+| swiskey-execds2-syd.ibb.ubs.com | 138.206.250.194 | TIMEOUT | — | — | flapping ✗ |
+| swiskey-execds1.ibb.ubs.com | 139.149.12.217 | TIMEOUT | — | — | still failing ✗ |
+| swiskey-execds3.ibb.ubs.com | 139.149.131.60 | TIMEOUT | — | — | still failing ✗ |
+| swiskey-execution-ds1-us.ibb.ubs.com | 151.191.176.160 | TIMEOUT | — | — | still failing ✗ |
+
+**US DS2 recovered.** Only 1 of 2 US endpoints is now online. US DS1 still down. EU and SYD are in flux.
+
+### 11.2 Certificate Anomaly on US DS2
+
+`swiskey-execution-ds2-us.ibb.ubs.com` came back online with the **old certificate** (expiry Jun 10 2026),
+not the new certificate (expiry Nov 26 2026) that `swiskey-execution.ibb.ubs.com` is serving.
+
+This means the engineer bound a different — or the previous — certkey object to the US DS2 vServer,
+rather than the new certkey applied to the primary vServer. Both certs are currently within their
+validity periods, so US DS2 is functional, but it will expire sooner. The new cert should be bound
+to align it with the other endpoints.
+
+| Endpoint | Cert Not After |
+|---|---|
+| swiskey-execution.ibb.ubs.com | Nov 26 2026 (new cert) |
+| swiskey-execution-ds2-us.ibb.ubs.com | **Jun 10 2026 (old cert)** |
+
+### 11.3 EU DS2 and DS4 Newly Timing Out
+
+`execds2` (139.149.12.218) and `execds4` (139.149.131.61) were both passing in run 2 with the new
+certificate. They are now timing out from the Windows path. The most likely explanation: the engineer
+is currently working through these vServers as part of the rolling cert update, and they are temporarily
+in a no-listener state (same transient pattern observed with US DS2 in run 2 → run 3).
+
+These are expected to recover once the cert binding is reapplied.
+
+### 11.4 SYD Endpoints Flapping Again
+
+`execds1-syd` and `execds2-syd` are back to timing out from Windows after appearing fixed in run 2.
+This is consistent with the DNS round-robin / intermittent behaviour documented in Section 6.3 —
+not all VIPs behind these DNS names have port 443 consistently configured.
+
+### 11.5 Summary of Remaining Work
+
+| Item | Status |
+|---|---|
+| US DS2 online | ✓ done — but bound to old cert (Jun 2026) |
+| US DS1 online | ✗ not yet |
+| EU DS1 (execds1) | ✗ not yet |
+| EU DS3 (execds3) | ✗ not yet |
+| EU DS2 / DS4 transient outage | likely in-progress, expected to recover |
+| SYD consistency | intermittent — may need DNS/VIP audit |
+| New cert on US DS2 | ✗ old cert bound — replace with Nov 2026 cert |
+
+---
+
+## 12. Fourth Run — 2026-05-31
+
+### 12.1 Current Status
+
+| Hostname | IP | TCP 443 | TLS | Cert Expiry | Delta from Run 3 |
+|---|---|---|---|---|---|
+| swiskey-execution.ibb.ubs.com | 139.149.12.214 | OPEN | TLS 1.3 | Nov 26 2026 | unchanged ✓ |
+| swiskey-execution-ds2-us.ibb.ubs.com | 148.112.146.150 | OPEN | TLS 1.3 | **Jun 10 2026** | unchanged ✓ (old cert) |
+| swiskey-execds2.ibb.ubs.com | 139.149.12.218 | OPEN | TLS 1.3 | Nov 26 2026 | **RECOVERED** ✓ |
+| swiskey-execds4.ibb.ubs.com | 139.149.131.61 | OPEN | TLS 1.3 | Nov 26 2026 | **RECOVERED** ✓ |
+| swiskey-execds1-syd.ibb.ubs.com | 138.206.250.193 | OPEN | TLS 1.3 | Nov 26 2026 | **RECOVERED** ✓ |
+| swiskey-execds2-syd.ibb.ubs.com | 138.206.250.194 | OPEN | TLS 1.3 | Nov 26 2026 | **RECOVERED** ✓ |
+| swiskey-execds1.ibb.ubs.com | 139.149.12.217 | TIMEOUT | — | — | still failing ✗ |
+| swiskey-execds3.ibb.ubs.com | 139.149.131.60 | TIMEOUT | — | — | still failing ✗ |
+| swiskey-execution-ds1-us.ibb.ubs.com | 151.191.176.160 | TIMEOUT | — | — | still failing ✗ |
+
+**6 of 9 endpoints passing. 3 remaining failures: EU DS1, EU DS3, US DS1.**
+
+### 12.2 Certificate Status
+
+All newly-recovered endpoints (execds2, execds4, execds1-syd, execds2-syd) are serving the new cert (Nov 26 2026). `execution-ds2-us` remains on the old cert (Jun 10 2026) — still functional but needs the certkey corrected before June 10.
+
+### 12.3 Remaining Work
+
+| Item | Status |
+|---|---|
+| EU DS1 (execds1 / 139.149.12.217) | ✗ still failing |
+| EU DS3 (execds3 / 139.149.131.60) | ✗ still failing |
+| US DS1 (execution-ds1-us / 151.191.176.160) | ✗ still failing |
+| US DS2 cert update (old → Nov 2026) | ✗ old cert (Jun 2026) still bound |
