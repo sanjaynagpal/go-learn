@@ -8,7 +8,7 @@ S Endpoint Failure Analysis
 
 ---
 
-## 1. Executive Summary
+## 1. Summary
 
 Nine external HTTPS endpoints were tested. **Five endpoints fail** — port 443 rejects all TCP connections. Four endpoints work correctly, completing a TLS 1.3 handshake and serving a valid DigiCert certificate.
 
