@@ -678,3 +678,47 @@ All newly-recovered endpoints (execds2, execds4, execds1-syd, execds2-syd) are s
 | EU DS3 (execds3 / 139.149.131.60) | ✗ still failing |
 | US DS1 (execution-ds1-us / 151.191.176.160) | ✗ still failing |
 | US DS2 cert update (old → Nov 2026) | ✗ old cert (Jun 2026) still bound |
+
+---
+
+## 13. Fifth Run — 2026-06-01 (Final Check)
+
+### 13.1 Current Status
+
+| Hostname | IP | TCP 443 | TLS | Cert Expiry | Delta from Run 4 |
+|---|---|---|---|---|---|
+| swiskey-execution.ibb.ubs.com | 139.149.12.214 | OPEN | TLS 1.3 | Nov 26 2026 | unchanged ✓ |
+| swiskey-execution-ds2-us.ibb.ubs.com | 148.112.146.150 | OPEN | TLS 1.3 | **Nov 26 2026** | **cert fixed** ✓ |
+| swiskey-execds2.ibb.ubs.com | 139.149.12.218 | OPEN | TLS 1.3 | Nov 26 2026 | unchanged ✓ |
+| swiskey-execds4.ibb.ubs.com | 139.149.131.61 | OPEN | TLS 1.3 | Nov 26 2026 | unchanged ✓ |
+| swiskey-execds1-syd.ibb.ubs.com | 138.206.250.193 | OPEN | TLS 1.3 | Nov 26 2026 | unchanged ✓ |
+| swiskey-execds2-syd.ibb.ubs.com | 138.206.250.194 | OPEN | TLS 1.3 | Nov 26 2026 | unchanged ✓ |
+| swiskey-execds1.ibb.ubs.com | 139.149.12.217 | TIMEOUT | — | — | still failing ✗ |
+| swiskey-execds3.ibb.ubs.com | 139.149.131.60 | TIMEOUT | — | — | still failing ✗ |
+| swiskey-execution-ds1-us.ibb.ubs.com | 151.191.176.160 | TIMEOUT | — | — | still failing ✗ |
+
+**6 of 9 passing. Certificate anomaly on US DS2 resolved.**
+
+### 13.2 Certificate Uniformity Achieved (on passing endpoints)
+
+All six passing endpoints now serve the same certificate:
+
+| Field | Value |
+|---|---|
+| Not After | Thu, 26 Nov 2026 23:59:59 UTC |
+| Issuer | DigiCert Global G2 TLS RSA SHA256 2020 CA1 |
+| Cipher | TLS_AES_256_GCM_SHA384 |
+
+The old cert (Jun 10 2026) that was previously mis-bound to `execution-ds2-us` has been replaced. All online endpoints are now consistent.
+
+### 13.3 Outstanding Failures
+
+Three endpoints remain offline — unchanged since run 3. These are the same three that never recovered through the rolling update:
+
+| Endpoint | IP | Failing since |
+|---|---|---|
+| swiskey-execds1.ibb.ubs.com | 139.149.12.217 | Run 1 (initial) |
+| swiskey-execds3.ibb.ubs.com | 139.149.131.60 | Run 1 (initial) |
+| swiskey-execution-ds1-us.ibb.ubs.com | 151.191.176.160 | Run 1 (initial) |
+
+These three have not transitioned through the RST → TIMEOUT → OPEN lifecycle observed on the other six endpoints during the rolling update. They remain at TCP timeout, suggesting the engineer has not yet applied the certificate binding to their vServers (or the vServers are in a permanently misconfigured state requiring further investigation). The same fix applies: bind the current certkey (Nov 2026) to each INACTIVE SSL Virtual Server on the Citrix ADC.
