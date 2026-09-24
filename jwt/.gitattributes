@@ -1,0 +1,7 @@
+# Scripts must keep LF line endings or they fail under bash/Linux, even when
+# checked out on Windows with core.autocrlf=true.
+*.sh   text eol=lf
+*.py   text eol=lf
+*.mjs  text eol=lf
+*.jq   text eol=lf
+*.jwt  text eol=lf
