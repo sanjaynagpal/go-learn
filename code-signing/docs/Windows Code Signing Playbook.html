@@ -1,0 +1,499 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Windows Code Signing Playbook</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: one reading column (~68ch) with diagrams breaking slightly wider; sections are a real sequence, so they are numbered. */
+:root{
+  --bg:#F4F6F7; --surface:#FFFFFF; --ink:#13212B; --muted:#56666F; --line:#D3DCE1;
+  --accent:#0B7A66; --accent-soft:#DCF0EA;
+  --warn:#9A5800; --warn-soft:#FAEBD4; --bad:#B3261E; --bad-soft:#F8DEDB; --code:#EAEFF2;
+  --f-display:"IBM Plex Sans Condensed","Arial Narrow",system-ui,sans-serif;
+  --f-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0E161B; --surface:#15212A; --ink:#E2EBEF; --muted:#93A5AF; --line:#2A3B46;
+  --accent:#3CC4A6; --accent-soft:#12372F; --warn:#E6A74B; --warn-soft:#3A2A12;
+  --bad:#F0857C; --bad-soft:#3D1C1A; --code:#1A2932; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0E161B; --surface:#15212A; --ink:#E2EBEF; --muted:#93A5AF; --line:#2A3B46;
+  --accent:#3CC4A6; --accent-soft:#12372F; --warn:#E6A74B; --warn-soft:#3A2A12;
+  --bad:#F0857C; --bad-soft:#3D1C1A; --code:#1A2932; color-scheme:dark}
+
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font:16px/1.6 var(--f-body)}
+.wrap{max-width:920px;margin:0 auto;padding-inline:20px;padding-block:40px 72px}
+.col{max-width:68ch}
+h1,h2,h3{font-family:var(--f-display);text-wrap:balance;line-height:1.15;margin:0}
+h1{font-size:clamp(2rem,5vw,3rem);font-weight:700;letter-spacing:-.01em}
+h2{font-size:1.65rem;font-weight:700;display:flex;gap:.6rem;align-items:baseline}
+h2 .n{font-family:var(--f-mono);font-size:.95rem;color:var(--accent);font-weight:500}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0}
+a{color:var(--accent)}
+code,pre{font-family:var(--f-mono);font-size:.86em}
+code{background:var(--code);padding:.1em .35em;border-radius:4px}
+.eyebrow{font:500 .78rem/1 var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.lede{font-size:1.12rem;color:var(--muted)}
+header{display:grid;gap:14px;padding-bottom:28px;border-bottom:1px solid var(--line)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:.9rem}
+nav.toc a{text-decoration:none;color:var(--ink);border-bottom:1px solid var(--line)}
+nav.toc a:hover,nav.toc a:focus-visible{border-color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+section{display:grid;gap:18px;padding-block:44px 8px}
+.stack{display:grid;gap:12px}
+ul.tight,ol.tight{margin:0;padding-left:1.2rem;display:grid;gap:6px}
+
+.short{display:grid;gap:10px;margin-top:28px;padding:20px 22px;background:var(--surface);border:1px solid var(--line);border-radius:10px}
+.short ul{margin:0;padding-left:1.1rem;display:grid;gap:6px}
+
+figure{margin:0;display:grid;gap:10px}
+figcaption{font-size:.88rem;color:var(--muted);max-width:68ch}
+.fig{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px}
+.fig svg{display:block;width:100%;min-width:660px;height:auto}
+
+/* SVG tokens */
+.box{fill:var(--surface);stroke:var(--line);stroke-width:1.2}
+.box-a{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.2}
+.row{fill:var(--bg);stroke:var(--line)}
+.row-a{fill:var(--accent-soft);stroke:var(--accent)}
+.t{fill:var(--ink);font:500 13px var(--f-body)}
+.tb{fill:var(--ink);font:600 14px var(--f-body)}
+.tm{fill:var(--muted);font:400 11.5px var(--f-body)}
+.tc{fill:var(--ink);font:400 12px var(--f-mono)}
+.arr{stroke:var(--muted);stroke-width:1.4;fill:none}
+.ahead{fill:var(--muted)}
+.dot{fill:var(--accent)}
+.lock{fill:none;stroke:var(--accent);stroke-width:2}
+.lockb{fill:var(--accent)}
+
+/* Verification */
+.verify{display:grid;grid-template-columns:1.1fr 1fr;gap:18px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:18px;display:grid;gap:12px;align-content:start;min-width:0}
+ol.checks{list-style:none;margin:0;padding:0;display:grid;gap:10px}
+ol.checks li{display:grid;grid-template-columns:26px 1fr;gap:10px;align-items:start}
+.tick{width:22px;height:22px;border-radius:50%;background:var(--accent);color:var(--surface);display:grid;place-items:center;font:600 12px var(--f-mono);margin-top:2px;
+  animation:lit 9s infinite both}
+ol.checks li:nth-child(2) .tick{animation-delay:.9s}
+ol.checks li:nth-child(3) .tick{animation-delay:1.8s}
+ol.checks li:nth-child(4) .tick{animation-delay:2.7s}
+ol.checks li:nth-child(5) .tick{animation-delay:3.6s}
+@keyframes lit{0%{background:var(--line);color:var(--muted)}6%,88%{background:var(--accent);color:var(--surface)}100%{background:var(--line);color:var(--muted)}}
+.checks small{display:block;color:var(--muted);font-size:.86rem}
+.chain{display:grid;gap:0}
+.link{border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:var(--bg)}
+.link.you{border-color:var(--accent);background:var(--accent-soft)}
+.link b{display:block;font-weight:600}
+.link span{font-size:.85rem;color:var(--muted)}
+.joint{height:22px;margin-left:22px;border-left:2px dashed var(--line);font:400 .75rem var(--f-mono);color:var(--muted);padding-left:10px;display:flex;align-items:center}
+.layers{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.layer{border-top:2px solid var(--accent);padding-top:10px;display:grid;gap:4px}
+.layer p{font-size:.92rem;color:var(--muted)}
+
+/* Timeline */
+.tl-controls{display:flex;flex-wrap:wrap;gap:12px 18px;align-items:center}
+.tl-controls label{font-weight:500}
+#when{flex:1 1 220px;accent-color:var(--accent)}
+#whenOut{font:500 1rem var(--f-mono);min-width:8ch}
+button{font:500 .9rem var(--f-body);color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:6px 14px;cursor:pointer}
+button:hover{border-color:var(--accent)}
+.tl-list{display:grid;gap:8px}
+.tl-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:10px 12px;background:var(--surface);border:1px solid var(--line);border-radius:8px}
+.tl-row b{font-weight:600}
+.tl-row span{display:block;font-size:.85rem;color:var(--muted)}
+.pill{font:500 .78rem/1 var(--f-body);padding:6px 10px;border-radius:99px;white-space:nowrap}
+.pill.ok{background:var(--accent-soft);color:var(--accent)}
+.pill.bad{background:var(--bad-soft);color:var(--bad)}
+.pill.warn{background:var(--warn-soft);color:var(--warn)}
+.pill.pending{background:var(--code);color:var(--muted)}
+.seg-ok{stroke:var(--accent);stroke-width:4}
+.seg-bad{stroke:var(--bad);stroke-width:3;stroke-dasharray:6 5}
+.certA{fill:var(--accent-soft);stroke:var(--accent)}
+.certB{fill:var(--warn-soft);stroke:var(--warn)}
+.grid{stroke:var(--line)}
+.ph{stroke:var(--ink);stroke-width:1.5}
+.phk{fill:var(--ink)}
+
+/* Cards */
+.cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px;display:grid;gap:8px;align-content:start}
+.card p{font-size:.92rem;color:var(--muted)}
+.card .pill{justify-self:start}
+
+/* Tables & code */
+.tbl{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:620px;font-size:.92rem}
+th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font:600 .75rem var(--f-mono);letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+tr:last-child td{border-bottom:0}
+pre{margin:0;background:var(--code);border-radius:8px;padding:14px 16px;overflow-x:auto;line-height:1.5}
+
+/* Pipeline flow */
+ol.flow{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;counter-reset:s}
+ol.flow li{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px 12px;display:grid;gap:2px;animation:stage 10s infinite both}
+ol.flow li b{font-weight:600;font-size:.95rem}
+ol.flow li span{font-size:.8rem;color:var(--muted)}
+ol.flow li:nth-child(2){animation-delay:2s} ol.flow li:nth-child(3){animation-delay:4s}
+ol.flow li:nth-child(4){animation-delay:6s} ol.flow li:nth-child(5){animation-delay:8s}
+@keyframes stage{0%,20%{border-color:var(--accent);box-shadow:inset 0 -3px 0 var(--accent)}24%,100%{border-color:var(--line);box-shadow:inset 0 -3px 0 transparent}}
+.checklist{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.checklist li{display:grid;grid-template-columns:20px 1fr;gap:10px}
+.checklist li::before{content:"";width:14px;height:14px;margin-top:5px;border:2px solid var(--accent);border-radius:3px}
+
+footer{margin-top:56px;padding-top:18px;border-top:1px solid var(--line);font-size:.85rem;color:var(--muted)}
+
+@media (max-width:720px){
+  .verify,.cards,.layers{grid-template-columns:1fr}
+  ol.flow{grid-template-columns:1fr}
+}
+@media (prefers-reduced-motion: reduce){
+  .motion{display:none}
+  .tick,ol.flow li{animation:none}
+}
+</style>
+
+<div class="wrap">
+<header>
+  <div class="eyebrow">Release engineering · Windows clients</div>
+  <h1>Windows Code Signing Playbook</h1>
+  <p class="lede col">How signing a Windows executable proves who built it, how Windows checks that proof, what certificate expiry breaks, and how to sign from GitLab CI with the key held in an HSM.</p>
+  <nav class="toc" aria-label="Sections">
+    <a href="#proves">What it proves</a><a href="#verify">How Windows checks</a><a href="#expiry">Expiry</a>
+    <a href="#obtain">Getting &amp; monitoring</a><a href="#clients">What clients see</a><a href="#hsm">HSM + GitLab CI</a>
+  </nav>
+  <div class="short">
+    <div class="eyebrow">In short</div>
+    <ul>
+      <li>A signature proves <b>who</b> published the file and that it is <b>unchanged</b>. It does not prove the code is safe.</li>
+      <li>Always <b>timestamp</b> signatures. Then binaries stay valid after the certificate expires.</li>
+      <li>Certificates now last at most about 15 months, so renewal is routine. Make the pipeline refuse to sign with an expired certificate.</li>
+      <li>Since June 2023, publicly trusted signing keys <b>must</b> be kept in certified hardware. The CI job asks the HSM to sign; it never holds the key.</li>
+      <li>In managed corporate environments, unsigned or badly signed binaries are usually blocked outright.</li>
+    </ul>
+  </div>
+</header>
+
+<section id="proves">
+  <h2><span class="n">01</span>What a code signing certificate proves</h2>
+  <p class="col">Windows signatures use Microsoft's <b>Authenticode</b> format. The pipeline hashes the executable, the private key signs that hash, and the signature, your certificate and a timestamp are embedded in the file. The certificate comes from a public Certificate Authority, which checked your organization's legal identity before issuing it.</p>
+  <figure>
+    <div class="fig">
+      <svg viewBox="0 0 760 250" role="img" aria-label="Signing flow: app.exe is hashed, the HSM signs the hash, and the signature, certificate and timestamp are embedded in the signed file">
+        <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ahead"/></marker></defs>
+        <rect x="20" y="70" width="120" height="80" rx="8" class="box"/>
+        <text x="80" y="105" text-anchor="middle" class="tb">app.exe</text>
+        <text x="80" y="126" text-anchor="middle" class="tm">unsigned build</text>
+        <line x1="140" y1="110" x2="186" y2="110" class="arr" marker-end="url(#ah)"/>
+        <rect x="190" y="70" width="130" height="80" rx="8" class="box"/>
+        <text x="255" y="105" text-anchor="middle" class="tb">SHA-256</text>
+        <text x="255" y="126" text-anchor="middle" class="tc">9f3a…c1e7</text>
+        <line x1="320" y1="110" x2="366" y2="110" class="arr" marker-end="url(#ah)"/>
+        <rect x="370" y="50" width="150" height="120" rx="8" class="box-a"/>
+        <path d="M439,84 v-6 a6,6 0 0 1 12,0 v6" class="lock"/>
+        <rect x="434" y="84" width="22" height="17" rx="3" class="lockb"/>
+        <text x="445" y="128" text-anchor="middle" class="tb">HSM signs hash</text>
+        <text x="445" y="148" text-anchor="middle" class="tm">private key never leaves</text>
+        <line x1="520" y1="110" x2="581" y2="113" class="arr" marker-end="url(#ah)"/>
+        <rect x="190" y="190" width="330" height="44" rx="8" class="box"/>
+        <text x="355" y="209" text-anchor="middle" class="t">Timestamp Authority (TSA)</text>
+        <text x="355" y="225" text-anchor="middle" class="tm">countersigns: "this signature existed at time T"</text>
+        <line x1="520" y1="212" x2="581" y2="187" class="arr" marker-end="url(#ah)"/>
+        <rect x="570" y="30" width="170" height="175" rx="8" class="box"/>
+        <text x="655" y="52" text-anchor="middle" class="tb">app.exe (signed)</text>
+        <rect x="585" y="64" width="140" height="28" rx="4" class="row"/><text x="655" y="82" text-anchor="middle" class="t">code, unchanged</text>
+        <rect x="585" y="99" width="140" height="28" rx="4" class="row-a"/><text x="655" y="117" text-anchor="middle" class="t">signature</text>
+        <rect x="585" y="134" width="140" height="28" rx="4" class="row"/><text x="655" y="152" text-anchor="middle" class="t">your certificate</text>
+        <rect x="585" y="169" width="140" height="28" rx="4" class="row"/><text x="655" y="187" text-anchor="middle" class="t">timestamp</text>
+        <g class="motion">
+          <circle r="4" class="dot"><animateMotion dur="1.4s" repeatCount="indefinite" path="M140,110 H186"/></circle>
+          <circle r="4" class="dot"><animateMotion dur="1.4s" begin=".45s" repeatCount="indefinite" path="M320,110 H366"/></circle>
+          <circle r="4" class="dot"><animateMotion dur="1.4s" begin=".9s" repeatCount="indefinite" path="M520,110 L581,113"/></circle>
+          <circle r="4" class="dot"><animateMotion dur="1.4s" begin=".9s" repeatCount="indefinite" path="M520,212 L581,187"/></circle>
+        </g>
+      </svg>
+    </div>
+    <figcaption>The certificate ties your public key to your verified company name. Anyone can check the signature with the public key, but only the holder of the private key could have made it.</figcaption>
+  </figure>
+  <div class="tbl"><table>
+    <thead><tr><th>Assurance</th><th>What it means for the client</th></tr></thead>
+    <tbody>
+      <tr><td><b>Authenticity</b></td><td>The file was signed by whoever controls the private key, and the CA vouches that this is "Your Company Ltd".</td></tr>
+      <tr><td><b>Integrity</b></td><td>No byte changed after signing. Changing even one byte changes the hash, and the signature fails.</td></tr>
+      <tr><td><b>Accountability</b></td><td>A real, vetted organization stands behind the binary. Its certificate can be revoked if it is misused.</td></tr>
+      <tr><td><b>Not covered</b></td><td>Whether the code is safe or bug-free. Everything depends on the private key staying secret.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="verify">
+  <h2><span class="n">02</span>How Windows checks the signature</h2>
+  <p class="col">When the file is opened, installed or inspected, Windows checks it through <code>WinVerifyTrust</code>. Every check must pass before Windows shows a verified publisher.</p>
+  <div class="verify">
+    <div class="panel">
+      <h3>Checks, in order</h3>
+      <ol class="checks">
+        <li><span class="tick">1</span><div>Hash matches<small>Windows recalculates the file's SHA-256 hash and compares it with the signed one.</small></div></li>
+        <li><span class="tick">2</span><div>Chain reaches a trusted root<small>Your certificate → intermediate CA → a root in the machine's Trusted Root store.</small></div></li>
+        <li><span class="tick">3</span><div>Certificate is for code signing<small>Its permitted use (Extended Key Usage) includes code signing, <code>1.3.6.1.5.5.7.3.3</code>.</small></div></li>
+        <li><span class="tick">4</span><div>Valid at signing time<small>Checked against the timestamp. Without one, Windows uses today's date.</small></div></li>
+        <li><span class="tick">5</span><div>Not revoked<small>Windows checks the CA's revocation lists (CRL or OCSP).</small></div></li>
+      </ol>
+    </div>
+    <div class="panel">
+      <h3>Trust chain</h3>
+      <div class="chain">
+        <div class="link"><b>Root CA</b><span>Shipped by Microsoft's Root Certificate Program, or added by the client's IT through Group Policy</span></div>
+        <div class="joint">signs</div>
+        <div class="link"><b>Intermediate CA</b><span>e.g. the CA's code signing issuer</span></div>
+        <div class="joint">signs</div>
+        <div class="link you"><b>Your Company Ltd</b><span>Code signing certificate; its key is held in your HSM</span></div>
+      </div>
+    </div>
+  </div>
+  <h3>Then each layer applies its own policy</h3>
+  <div class="layers">
+    <div class="layer"><b>UAC prompt</b><p>Shows "Verified publisher: Your Company" for a valid signature. Otherwise it shows "Unknown publisher" in a yellow prompt.</p></div>
+    <div class="layer"><b>SmartScreen</b><p>Checks downloaded files. Its decision is based on reputation, which builds up against your publisher identity over time. Since 2024, EV certificates no longer get instant reputation.</p></div>
+    <div class="layer"><b>App Control (WDAC), AppLocker, Smart App Control</b><p>Corporate rules such as "allow only binaries signed by publisher X". This is how your clients' IT teams will allow-list you.</p></div>
+    <div class="layer"><b>Defender and EDR</b><p>Take the signature and reputation into account when deciding whether to flag or quarantine a file.</p></div>
+  </div>
+  <pre>Get-AuthenticodeSignature .\app.exe | Format-List *
+signtool verify /pa /v app.exe</pre>
+</section>
+
+<section id="expiry">
+  <h2><span class="n">03</span>What happens when the certificate expires</h2>
+  <p class="col">It depends on whether the signature was <b>timestamped</b>. A timestamp from a trusted Timestamp Authority proves the file was signed while the certificate was valid, so the signature stays valid after expiry. Without one, the signature fails the day the certificate expires. Drag the date to see how four releases behave.</p>
+  <figure>
+    <div class="fig">
+      <div class="tl-controls">
+        <label for="when">Date on the client machine</label>
+        <input type="range" id="when" min="0" max="36" step="0.1" value="21.4">
+        <output id="whenOut" for="when">Oct 2026</output>
+        <button id="play" type="button">Play</button>
+      </div>
+      <svg id="tl" viewBox="0 0 760 240" role="img" aria-label="Timeline of two certificates and four signed releases from 2025 to 2028"></svg>
+    </div>
+    <div class="tl-list" id="tlList"></div>
+    <figcaption>Example dates. Certificate 1 runs from Mar 2025 to Jun 2026 (460 days). Certificate 2 is a renewal issued a month before Certificate 1 expires. Green lines mark periods when the signature is valid; red dashes mark periods when it is not.</figcaption>
+  </figure>
+  <ul class="tight col">
+    <li><b>Revocation is different from expiry.</b> If a certificate is revoked, signatures timestamped after the revocation date fail. If the key was compromised, the CA may backdate the revocation, which also breaks older releases.</li>
+    <li><b>Expired means you cannot sign.</b> No valid new signature can be made with an expired certificate. You need the renewed one.</li>
+    <li><b>Use SHA-256 throughout:</b> <code>signtool sign /fd sha256 /tr http://timestamp.digicert.com /td sha256 …</code></li>
+  </ul>
+</section>
+
+<section id="obtain">
+  <h2><span class="n">04</span>Getting a certificate and watching its expiry</h2>
+  <div class="cards">
+    <div class="card"><span class="pill ok">Fits external clients</span><h3>Public CA</h3><p>DigiCert, Sectigo, GlobalSign, SSL.com. <b>OV</b> (Organization Validated) is standard; <b>EV</b> (Extended Validation) has stricter vetting, and some customers' procurement teams still ask for it. Expect the CA to check business registration and D-U-N-S, and to call back a verified phone number.</p></div>
+    <div class="card"><span class="pill ok">Simplest for CI</span><h3>Microsoft Trusted Signing</h3><p>Being renamed Azure Artifact Signing. Microsoft verifies your organization and holds the keys in its own HSMs. Certificates last about 3 days and are issued automatically, so there is almost no expiry to manage. Only organizations in certain countries are eligible, so check yours first.</p></div>
+    <div class="card"><span class="pill warn">Internal only</span><h3>Enterprise CA (AD CS)</h3><p>Only trusted on machines that trust your internal root. Your clients' machines don't, so this does not suit software you ship to them.</p></div>
+  </div>
+  <h3>Making sure an expired certificate is never used</h3>
+  <ul class="tight col">
+    <li><b>Gate in the pipeline.</b> Before signing, read the certificate's expiry date and fail the job if it has passed or is within N days. After signing, verify the signature and confirm a timestamp is present.</li>
+    <li><b>Scheduled GitLab pipeline.</b> Run the same check daily and alert at 60, 30 and 7 days by email or Slack, or by opening an issue.</li>
+    <li><b>Platform events.</b> Azure Key Vault raises a "certificate near expiry" event, and AWS and GCP offer similar alerts. Send CA renewal emails to a shared mailbox, not one person's inbox.</li>
+    <li><b>Ownership.</b> Track the certificate in your inventory or lifecycle tool (Venafi/CyberArk, Keyfactor, DigiCert Trust Lifecycle Manager). Name an owner and start renewal 4 to 6 weeks ahead, because the CA has to re-validate your organization.</li>
+  </ul>
+  <pre># check-cert-expiry.sh: refuse to sign within 14 days of expiry
+EXP=$(az keyvault certificate show --vault-name "$KV" -n "$CERT" --query attributes.expires -o tsv)
+DAYS=$(( ($(date -d "$EXP" +%s) - $(date +%s)) / 86400 ))
+[ "$DAYS" -lt 14 ] &amp;&amp; { echo "Certificate expires in $DAYS days - refusing to sign"; exit 1; }</pre>
+</section>
+
+<section id="clients">
+  <h2><span class="n">05</span>What the client sees</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>Artifact</th><th>Standard Windows</th><th>Managed corporate estate</th></tr></thead>
+    <tbody>
+      <tr><td>Signed and timestamped; certificate expired later</td><td><span class="pill ok">Valid</span> Verified publisher</td><td>Allowed by publisher rules</td></tr>
+      <tr><td>Signed without a timestamp; certificate now expired</td><td><span class="pill bad">Invalid</span> "A required certificate is not within its validity period"</td><td>Blocked; can look like tampering</td></tr>
+      <tr><td>Signed with an already-expired certificate</td><td><span class="pill bad">Invalid</span> Signature fails verification</td><td>Blocked, and likely flagged by security tools</td></tr>
+      <tr><td>Signed; certificate later revoked</td><td><span class="pill bad">Invalid</span> for signatures after the revocation date</td><td>Blocked</td></tr>
+      <tr><td>Unsigned</td><td><span class="pill warn">Unknown publisher</span> SmartScreen "Windows protected your PC"; Edge may warn on download</td><td>Usually blocked by App Control or Smart App Control, and rejected at security intake</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="hsm">
+  <h2><span class="n">06</span>Keeping the key in an HSM and signing from GitLab CI</h2>
+  <p class="col"><b>An HSM is required, not optional.</b> Since June 2023, CA/Browser Forum rules require the private key of any publicly trusted code signing certificate to be generated and stored in certified hardware (FIPS 140-2 Level 2+ or Common Criteria EAL4+). CAs no longer issue downloadable <code>.pfx</code> files. The pipeline sends the hash to the HSM and gets a signature back. The key never leaves the device.</p>
+  <ol class="flow" aria-label="Release pipeline stages">
+    <li><b>Build</b><span>compile on a protected tag</span></li>
+    <li><b>Check expiry</b><span>fail if expiring soon</span></li>
+    <li><b>Sign</b><span>OIDC → HSM, with timestamp</span></li>
+    <li><b>Verify</b><span>signature and timestamp present</span></li>
+    <li><b>Publish</b><span>HTTPS, with SHA-256 hashes</span></li>
+  </ol>
+  <figure>
+    <div class="fig">
+      <svg viewBox="0 0 760 260" role="img" aria-label="The GitLab sign job exchanges its OIDC token for a cloud access token, then sends the file hash to the cloud HSM and receives a signature">
+        <defs><marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ahead"/></marker></defs>
+        <rect x="30" y="20" width="250" height="220" rx="8" class="box"/>
+        <text x="50" y="48" class="tb">GitLab job: sign</text>
+        <text x="50" y="66" class="tm">release tags only · protected environment</text>
+        <rect x="50" y="82" width="210" height="34" rx="4" class="row"/><text x="155" y="104" text-anchor="middle" class="tc">id_token (OIDC JWT)</text>
+        <rect x="50" y="128" width="210" height="34" rx="4" class="row"/><text x="155" y="150" text-anchor="middle" class="tc">check-cert-expiry.sh</text>
+        <rect x="50" y="174" width="210" height="34" rx="4" class="row-a"/><text x="155" y="196" text-anchor="middle" class="tc">jsign app.exe</text>
+        <text x="155" y="228" text-anchor="middle" class="tm">no key or password stored in CI</text>
+
+        <rect x="470" y="20" width="260" height="90" rx="8" class="box"/>
+        <text x="490" y="48" class="tb">Cloud identity</text>
+        <text x="490" y="68" class="tm">Entra ID / AWS IAM / GCP WIF</text>
+        <text x="490" y="86" class="tm">trusts GitLab as an OIDC issuer</text>
+        <text x="490" y="102" class="tm">grants "sign" only, never key export</text>
+
+        <rect x="470" y="140" width="260" height="100" rx="8" class="box-a"/>
+        <path d="M497,172 v-6 a6,6 0 0 1 12,0 v6" class="lock"/>
+        <rect x="492" y="172" width="22" height="17" rx="3" class="lockb"/>
+        <text x="526" y="186" class="tb">Cloud HSM</text>
+        <text x="490" y="210" class="tm">Key Vault Premium · CloudHSM · Cloud KMS</text>
+        <text x="490" y="227" class="tm">key non-exportable · every use audit-logged</text>
+
+        <text x="375" y="52" text-anchor="middle" class="tm">JWT</text>
+        <line x1="280" y1="60" x2="466" y2="60" class="arr" marker-end="url(#ah2)"/>
+        <text x="375" y="82" text-anchor="middle" class="tm">short-lived access token</text>
+        <line x1="470" y1="90" x2="284" y2="90" class="arr" marker-end="url(#ah2)"/>
+        <text x="375" y="172" text-anchor="middle" class="tm">SHA-256 hash</text>
+        <line x1="280" y1="180" x2="466" y2="180" class="arr" marker-end="url(#ah2)"/>
+        <text x="375" y="202" text-anchor="middle" class="tm">signature</text>
+        <line x1="470" y1="210" x2="284" y2="210" class="arr" marker-end="url(#ah2)"/>
+        <g class="motion">
+          <circle r="4" class="dot"><animateMotion dur="4s" repeatCount="indefinite" keyPoints="0;1;1" keyTimes="0;.2;1" calcMode="linear" path="M280,60 H466"/></circle>
+          <circle r="4" class="dot"><animateMotion dur="4s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;.25;.45;1" calcMode="linear" path="M470,90 H284"/></circle>
+          <circle r="4" class="dot"><animateMotion dur="4s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;.5;.7;1" calcMode="linear" path="M280,180 H466"/></circle>
+          <circle r="4" class="dot"><animateMotion dur="4s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;.75;.95;1" calcMode="linear" path="M470,210 H284"/></circle>
+        </g>
+      </svg>
+    </div>
+    <figcaption>The job proves its identity with a short-lived token GitLab issues for that run. It never handles the private key, only a hash going out and a signature coming back.</figcaption>
+  </figure>
+
+  <h3>Ways to connect GitLab to an HSM</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>Option</th><th>How GitLab connects</th><th>Trade-off</th></tr></thead>
+    <tbody>
+      <tr><td><b>Microsoft Trusted Signing</b></td><td><code>signtool</code> with Microsoft's signing plug-in, or <code>jsign</code>; authentication through GitLab OIDC → Entra ID</td><td>Simplest. No HSM or certificate renewals to manage.</td></tr>
+      <tr><td><b>CA cloud signing</b><br><span class="tm">DigiCert KeyLocker, SSL.com eSigner, GlobalSign, Sectigo</span></td><td>The CA's command-line tool (e.g. <code>smctl</code>) or <code>jsign</code>, with an API key in a protected, masked CI variable</td><td>Key sits in the CA's HSM. Priced per signature or per year.</td></tr>
+      <tr><td><b>Your own cloud HSM/KMS</b><br><span class="tm">Azure Key Vault Premium / Managed HSM, AWS CloudHSM / KMS, Google Cloud KMS (HSM)</span></td><td>Generate the key and certificate request in the KMS, get them certified by a CA, then sign with <code>jsign</code> or <code>AzureSignTool</code> using OIDC</td><td>Full control. Confirm first that your CA accepts that HSM's key attestation.</td></tr>
+      <tr><td><b>USB token or on-premises HSM</b></td><td>Attached to a dedicated, protected self-hosted Windows runner; <code>signtool</code> or PKCS#11</td><td>Works, but fragile: PIN prompts, one physical machine, hard to scale.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>Example signing job (Azure Key Vault and GitLab OIDC)</h3>
+  <p class="col"><code>jsign</code> runs on Linux runners (it is Java) and supports Azure Key Vault, Trusted Signing, AWS, GCP, DigiCert and PKCS#11 HSMs. You don't need a Windows runner just to sign.</p>
+  <pre>sign:
+  stage: sign
+  image: your-registry/jsign-azcli:latest
+  id_tokens:
+    AZURE_JWT:
+      aud: api://AzureADTokenExchange
+  rules:
+    - if: $CI_COMMIT_TAG                 # release tags only
+  environment: code-signing              # protected environment + approvers
+  script:
+    - az login --service-principal -u "$AZ_CLIENT_ID" -t "$AZ_TENANT_ID" --federated-token "$AZURE_JWT"
+    - ./check-cert-expiry.sh             # fails if expired or close to expiry
+    - TOKEN=$(az account get-access-token --resource https://vault.azure.net --query accessToken -o tsv)
+    - jsign --storetype AZUREKEYVAULT --keystore "$KV" --storepass "$TOKEN" --alias "$CERT"
+        --tsaurl http://timestamp.digicert.com --tsmode RFC3161 --alg SHA-256 dist/app.exe
+    - osslsigncode verify dist/app.exe   # confirm signature + timestamp
+  artifacts:
+    paths: [dist/app.exe]</pre>
+
+  <h3>Hardening checklist</h3>
+  <ul class="checklist col">
+    <li>Sign only from protected branches or tags. Never sign in merge request pipelines, and especially not from forks.</li>
+    <li>Put signing behind a protected environment with required approvers, on protected runners. Anyone who can trigger signing can sign malware with your company's name.</li>
+    <li>Use GitLab OIDC (<code>id_tokens</code>) instead of long-lived secrets. Give the signing identity permission to sign and nothing else.</li>
+    <li>Sign only what this pipeline built: build, then sign, then verify. Keep HSM and cloud audit logs so every signature traces back to a pipeline run.</li>
+    <li>Sign everything you ship: the executable, every DLL, and the MSI or installer. Always timestamp.</li>
+    <li>On the download site, serve over HTTPS and publish SHA-256 hashes next to each file.</li>
+  </ul>
+</section>
+
+<footer>Reflects CA/Browser Forum rules and Microsoft behaviour as of October 2026. Confirm the specifics with your CA before relying on them: maximum validity, Trusted Signing eligibility and accepted HSMs all change.</footer>
+</div>
+
+<script>
+(function(){
+  var NS="http://www.w3.org/2000/svg", svg=document.getElementById("tl");
+  var MON=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  var X0=150, W=590, SPAN=36, TODAY=21.4;
+  function x(m){return X0+m*W/SPAN}
+  function label(m){var i=Math.min(Math.floor(m),35);return MON[i%12]+" "+(2025+Math.floor(i/12))}
+  var certs={A:{from:2,to:17.1,name:"Certificate 1",cls:"certA",y:22},B:{from:16,to:31.5,name:"Certificate 2",cls:"certB",y:44}};
+  var sigs=[
+    {name:"v1.0",at:5,cert:"A",ts:true},
+    {name:"v1.1",at:12,cert:"A",ts:false},
+    {name:"v1.2 · old certificate",at:19,cert:"A",ts:true},
+    {name:"v1.2 · renewed certificate",at:19,cert:"B",ts:true}
+  ];
+  function el(tag,attrs,text){var e=document.createElementNS(NS,tag);for(var k in attrs)e.setAttribute(k,attrs[k]);if(text!=null)e.textContent=text;svg.appendChild(e);return e}
+
+  for(var q=0;q<=SPAN;q+=3){el("line",{x1:x(q),x2:x(q),y1:14,y2:206,class:"grid","stroke-width":q%12?0.5:1})}
+  [0,12,24,36].forEach(function(m){el("text",{x:x(m),y:226,"text-anchor":"middle",class:"tm"},String(2025+m/12))});
+  Object.keys(certs).forEach(function(k){var c=certs[k];
+    el("text",{x:0,y:c.y+12,class:"tm"},c.name);
+    el("rect",{x:x(c.from),y:c.y,width:x(c.to)-x(c.from),height:16,rx:3,class:c.cls});
+  });
+  el("line",{x1:x(certs.A.to),x2:x(certs.A.to),y1:62,y2:206,class:"seg-bad","stroke-width":1,"stroke-dasharray":"2 4"});
+  el("text",{x:x(certs.A.to)+4,y:76,class:"tm"},"Certificate 1 expires");
+  sigs.forEach(function(s,i){
+    var y=100+i*28, c=certs[s.cert], end=x(SPAN);
+    el("text",{x:0,y:y+4,class:"t"},s.name.split(" · ")[0]+(s.ts?"":" (no timestamp)"));
+    if(s.at>c.to){el("line",{x1:x(s.at),x2:end,y1:y,y2:y,class:"seg-bad"})}
+    else if(s.ts){el("line",{x1:x(s.at),x2:end,y1:y,y2:y,class:"seg-ok"})}
+    else{el("line",{x1:x(s.at),x2:x(c.to),y1:y,y2:y,class:"seg-ok"});el("line",{x1:x(c.to),x2:end,y1:y,y2:y,class:"seg-bad"})}
+    el("circle",{cx:x(s.at),cy:y,r:5,class:s.cert==="A"?"certA":"certB","stroke-width":2});
+  });
+  var ph=el("line",{x1:x(TODAY),x2:x(TODAY),y1:12,y2:208,class:"ph"});
+  var phk=el("path",{d:"",class:"phk"});
+
+  var list=document.getElementById("tlList"), rows=[];
+  sigs.forEach(function(s){
+    var r=document.createElement("div");r.className="tl-row";
+    r.innerHTML='<div><b></b><span></span></div><em class="pill"></em>';
+    r.querySelector("b").textContent=s.name;
+    r.querySelector("span").textContent="Signed "+label(s.at)+" · "+certs[s.cert].name+" · "+(s.ts?"timestamped":"no timestamp");
+    list.appendChild(r);rows.push(r.querySelector(".pill"));
+  });
+  function status(s,m){
+    var c=certs[s.cert];
+    if(m<s.at)return["pending","Not built yet"];
+    if(s.at>c.to||s.at<c.from)return["bad","Invalid: certificate had expired"];
+    if(s.ts)return["ok","Valid"];
+    return m<=c.to?["ok","Valid until certificate expires"]:["bad","Invalid: expired, no timestamp"];
+  }
+  var input=document.getElementById("when"), out=document.getElementById("whenOut");
+  function render(m){
+    var px=x(m);ph.setAttribute("x1",px);ph.setAttribute("x2",px);
+    phk.setAttribute("d","M"+(px-6)+",6 L"+(px+6)+",6 L"+px+",14 z");
+    out.textContent=label(m)+(Math.abs(m-TODAY)<0.15?" (today)":"");
+    sigs.forEach(function(s,i){var st=status(s,m);rows[i].className="pill "+st[0];rows[i].textContent=st[1]});
+  }
+  input.addEventListener("input",function(){stop();render(+input.value)});
+  var raf=null;
+  function stop(){if(raf){cancelAnimationFrame(raf);raf=null}}
+  function play(){
+    stop();var t0=null,dur=7000;
+    function step(t){if(!t0)t0=t;var p=Math.min((t-t0)/dur,1),m=p*SPAN;input.value=m;render(m);
+      if(p<1)raf=requestAnimationFrame(step);else raf=null}
+    raf=requestAnimationFrame(step);
+  }
+  document.getElementById("play").addEventListener("click",play);
+  render(TODAY);
+  var reduce=window.matchMedia&&window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if(!reduce&&"IntersectionObserver" in window){
+    var io=new IntersectionObserver(function(es){if(es[0].isIntersecting){io.disconnect();play()}},{threshold:.6});
+    io.observe(svg);
+  }
+})();
+</script>
+
+</body></html>
