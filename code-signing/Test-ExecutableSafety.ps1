@@ -88,7 +88,63 @@ function Get-NormalizedName([string]$Name) {
     return ($n -replace '[^\p{L}\p{N}]', '').ToLowerInvariant()
 }
 
-$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+# Reads the embedded Authenticode PKCS#7 blob straight from the PE file and reports
+# what it contains: timestamps (RFC 3161 or legacy), nested signatures and how many
+# certificates were embedded. This works even when Windows rejects the chain, in which
+# case Get-AuthenticodeSignature does not report a TimeStamperCertificate.
+function Get-EmbeddedSignatureInfo([string]$LiteralPath) {
+    try { Add-Type -AssemblyName System.Security -ErrorAction Stop } catch { }
+    $fs = [IO.File]::Open($LiteralPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+    try {
+        $br = New-Object IO.BinaryReader($fs)
+        if ($fs.Length -lt 64 -or $br.ReadUInt16() -ne 0x5A4D) { return $null }
+        $fs.Position = 0x3C; $peOff = $br.ReadInt32()
+        if ($peOff -le 0 -or ($peOff + 0x100) -gt $fs.Length) { return $null }
+        $fs.Position = $peOff + 24; $magic = $br.ReadUInt16()
+        $dataDirOff = if ($magic -eq 0x20B) { $peOff + 24 + 112 } else { $peOff + 24 + 96 }
+        $fs.Position = $dataDirOff + 4 * 8                  # entry 4 = certificate table
+        $certOff = $br.ReadUInt32(); $certSize = $br.ReadUInt32()
+        if ($certOff -eq 0 -or $certSize -lt 8 -or ($certOff + $certSize) -gt $fs.Length) { return $null }
+        $fs.Position = $certOff                              # WIN_CERTIFICATE header
+        $len = $br.ReadUInt32(); [void]$br.ReadUInt16(); $type = $br.ReadUInt16()
+        if ($type -ne 2 -or $len -le 8 -or $len -gt $certSize) { return $null }   # 2 = PKCS#7
+        $blob = $br.ReadBytes([int]$len - 8)
+    } finally { $fs.Dispose() }
+
+    $cms = New-Object Security.Cryptography.Pkcs.SignedCms
+    $cms.Decode($blob)
+    $si = $cms.SignerInfos[0]
+    $info = [ordered]@{
+        Rfc3161 = $false; Legacy = $false; TsaSubject = $null; SigningTime = $null
+        NestedSignatures = 0; EmbeddedCertCount = $cms.Certificates.Count
+        DigestAlgorithm = $si.DigestAlgorithm.FriendlyName
+    }
+    foreach ($a in $si.UnsignedAttributes) {
+        switch ($a.Oid.Value) {
+            '1.3.6.1.4.1.311.3.3.1' {                        # RFC 3161 timestamp token
+                $info.Rfc3161 = $true
+                $tst = New-Object Security.Cryptography.Pkcs.SignedCms
+                $tst.Decode($a.Values[0].RawData)
+                $tsi = $tst.SignerInfos[0]
+                if ($tsi.Certificate) { $info.TsaSubject = $tsi.Certificate.Subject }
+                foreach ($sa in $tsi.SignedAttributes) {
+                    if ($sa.Oid.Value -eq '1.2.840.113549.1.9.5') { $info.SigningTime = $sa.Values[0].SigningTime }
+                }
+            }
+            '1.3.6.1.4.1.311.2.4.1' { $info.NestedSignatures += $a.Values.Count }   # dual signing
+        }
+    }
+    foreach ($cs in $si.CounterSignerInfos) {                # legacy Authenticode timestamp
+        $info.Legacy = $true
+        if (-not $info.TsaSubject -and $cs.Certificate) { $info.TsaSubject = $cs.Certificate.Subject }
+        foreach ($sa in $cs.SignedAttributes) {
+            if (-not $info.SigningTime -and $sa.Oid.Value -eq '1.2.840.113549.1.9.5') { $info.SigningTime = $sa.Values[0].SigningTime }
+        }
+    }
+    return [pscustomobject]$info
+}
+
+$isAdmin =([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
     [Security.Principal.WindowsBuiltInRole]::Administrator)
 
 # ------------------------------------------------------------------ 1. file
@@ -276,13 +332,33 @@ if ($cert) {
         Add-Finding PASS 'Signature' 'Extended Validation (EV) code-signing certificate: the publisher identity was strictly verified.'
     }
 
-    if ($sig.TimeStamperCertificate) {
-        Add-Finding PASS 'Signature' "Signature is timestamped by $($sig.TimeStamperCertificate.GetNameInfo('SimpleName', $false)), so it stays valid after the certificate expires."
+    # Timestamp: Windows' view first, then the raw signature blob (embedded signatures only)
+    $embedded = $null
+    if (-not $sig.PSObject.Properties['SignatureType'] -or $sig.SignatureType -ne 'Catalog') {
+        try { $embedded = Get-EmbeddedSignatureInfo $full } catch {
+            Add-Finding INFO 'Signature' "Could not parse the embedded signature: $($_.Exception.Message)"
+        }
+    }
+    $hasTimestamp = [bool]$sig.TimeStamperCertificate -or ($embedded -and ($embedded.Rfc3161 -or $embedded.Legacy))
+    if ($hasTimestamp) {
+        $tsaName = if ($sig.TimeStamperCertificate) { $sig.TimeStamperCertificate.GetNameInfo('SimpleName', $false) }
+                   elseif ($embedded.TsaSubject) { ($embedded.TsaSubject -split ',')[0] -replace '^CN=', '' }
+                   else { 'an unnamed timestamp authority' }
+        $kindText = if ($embedded -and $embedded.Rfc3161) { 'an RFC 3161 timestamp' } elseif ($embedded -and $embedded.Legacy) { 'a legacy Authenticode timestamp' } else { 'a timestamp' }
+        $whenText = if ($embedded -and $embedded.SigningTime) { (" at {0:yyyy-MM-dd HH:mm} UTC" -f $embedded.SigningTime.ToUniversalTime()) } else { '' }
+        Add-Finding PASS 'Signature' "Signature has $kindText from $tsaName$whenText, so it stays valid after the certificate expires."
+        if (-not $sig.TimeStamperCertificate) {
+            Add-Finding INFO 'Signature' 'Windows did not report this timestamp because the signature failed validation; it was read directly from the file.'
+        }
     } else {
-        Add-Finding WARN 'Signature' 'Signature has no timestamp; it stops being valid when the certificate expires.'
+        $how = if ($embedded) { ' The signature block contains no RFC 3161 or legacy timestamp, so the signing tool did not add one (for signtool, check that /tr <TSA url> /td sha256 was used and succeeded).' } else { '' }
+        Add-Finding WARN 'Signature' "Signature has no timestamp; it stops being valid when the certificate expires.$how"
         if ($cert.NotAfter -lt (Get-Date)) {
             Add-Finding FAIL 'Signature' 'Certificate has expired and there is no timestamp.'
         }
+    }
+    if ($embedded) {
+        Add-Finding INFO 'Signature' ("Embedded signature: {0} digest, {1} certificate(s) included, {2} nested signature(s)." -f $embedded.DigestAlgorithm, $embedded.EmbeddedCertCount, $embedded.NestedSignatures)
     }
 
     # Chain + revocation
@@ -291,7 +367,7 @@ if ($cert) {
     $chain.ChainPolicy.RevocationFlag = 'EntireChain'
     $chain.ChainPolicy.UrlRetrievalTimeout = [TimeSpan]::FromSeconds(15)
     [void]$chain.ChainPolicy.ApplicationPolicy.Add((New-Object Security.Cryptography.Oid '1.3.6.1.5.5.7.3.3'))
-    if ($sig.TimeStamperCertificate) {
+    if ($hasTimestamp) {
         $chain.ChainPolicy.VerificationFlags = 'IgnoreNotTimeValid'
     }
     $chainOk = $chain.Build($cert)
