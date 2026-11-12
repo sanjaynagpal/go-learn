@@ -11,9 +11,28 @@ So this script:
 
 Publishers can run it, on a Windows build agent after signing, as a release gate: exit code `2` fails the build.
 
+## Summary of checks
+
+Most signature problems can only be fixed by the publisher, but several have a **local side**: a download that went wrong, a company CA your PC doesn't have yet, a network that blocks revocation checks, or a date after which the file will stop working. The last column shows what, if anything, can or should change on your PC or in your company's environment.
+
+| # | Check | What it looks at | Why it helps | What it means for your local environment |
+|---|---|---|---|---|
+| 1 | **Signature status** | Whether the file is signed, and whether it changed after signing | An altered file can't be trusted, whoever signed it | *Broken signature:* the download may be damaged; download it again from the official site. *Not signed:* nothing to change locally; compare the hash with the vendor's instead. |
+| 2 | **Signer and certificate** | Who signed it, who issued the certificate, validity dates, EV, how new the certificate is | Tells you who stands behind the file | Nothing to change locally. A very new certificate is a reason to confirm the hash or signer with the vendor. |
+| 3 | **Certificate purpose** | The Code Signing usage, and the Lifetime Signing usage | A certificate not made for code signing isn't valid for it; Lifetime Signing makes signatures expire with the certificate | Nothing to change locally; the publisher must use a different certificate. |
+| 4 | **Timestamp** | Whether a trusted timestamp proves when the file was signed | Without one, the signature stops being valid when the certificate expires | Note the expiry date the script prints. After it, Smart App Control blocks the file and update checks fail on your PCs, so plan for an updated build before then. |
+| 5 | **Digest algorithm** | SHA-256 or the obsolete SHA-1 | Windows no longer trusts new SHA-1 signatures | Nothing to change locally. |
+| 6 | **Chain to a trusted root** | Whether the certificate leads to a root CA your PC trusts | Decides whether Windows accepts the signature at all | *Company-internal software:* IT may need to deploy the company's root and intermediate CA (Group Policy or Intune). Never install an unknown root yourself. *Public software:* the publisher must fix it. |
+| 7 | **Revocation** | Whether the CA has withdrawn the certificate | A revoked certificate usually means a stolen key | *Revoked:* don't run it, nothing to change locally. *Can't be checked:* your PC needs network access to the CA's CRL/OCSP addresses, so check the proxy or firewall. |
+| 8 | **Embedded chain** | Whether the signature carries the intermediate CA, or only the signer's certificate | Without it, the file validates only on PCs that already have the intermediate | IT can deploy the intermediate CA as a stopgap; the real fix is a re-signed build. |
+| 9 | **Publisher identity** | The signer against `-ExpectedPublisher`, and against the company name in the file | Catches files that pretend to come from a known vendor | Nothing to change locally. If it doesn't match, don't run it, and download only from the vendor's official site. |
+
+For the checks you can act on yourself (antivirus, App Control, permissions, where the file came from), see [`Test-ExecutableEnvironment.ps1`](Test-ExecutableEnvironment.md).
+
 ## Contents
 
-- [Why a signature check](#why-a-separate-signature-check)
+- [Why a signature check](#why-a-signature-check)
+- [Summary of checks](#summary-of-checks)
 - [Quick start](#quick-start)
 - [Parameters](#parameters)
 - [Output, actions and exit codes](#output-actions-and-exit-codes)

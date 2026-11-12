@@ -6,8 +6,23 @@ A PowerShell script that checks a downloaded Windows executable **before you run
 > - [`Test-ExecutableSignature.ps1`](Test-ExecutableSignature.md): signature and certificate only. Problems the **publisher** must fix.
 > - [`Test-ExecutableEnvironment.ps1`](Test-ExecutableEnvironment.md): everything else on this PC. Problems **you** or your **IT administrator** can fix.
 
+## Summary of checks
+
+The script runs five groups of checks. The last two columns show why each helps and what a problem points to: a change on your PC or in your company's environment, or something only the publisher can fix.
+
+| # | Check | What it looks at | Why it helps | What it points to if it fails |
+|---|---|---|---|---|
+| 1 | **File identity** | SHA-256 against the vendor's hash, disguised names, real file type, Mark of the Web (download source), hidden data streams | Confirms you have the genuine file, from the expected site, not disguised or carrying hidden data | **Local:** download again from the official site; delete disguised files; turn on file extensions in Explorer; remove unexpected data streams. |
+| 2 | **Digital signature** | Signature status, signer, certificate, timestamp, chain to a trusted root, revocation | Proves who published the file and that it hasn't changed since | **Publisher**, for most problems. **Local side:** a damaged download (download again); a company CA your PC lacks (IT deploys it); revocation can't be checked (allow the CA's CRL/OCSP addresses through the proxy); no timestamp (note the date the file will stop being trusted). |
+| 3 | **Microsoft Defender** | Real-time protection, definition age, a scan of just this file | Finds known malware, and tells you whether the scan itself can be trusted | **Local:** turn protection on, update definitions, scan with your main antivirus; delete the file if a threat is found. |
+| 4 | **App Control** | WDAC enforcement, Smart App Control, AppLocker rules, earlier block events | Predicts whether Windows will block the file, and names the policy | **IT:** add a publisher or hash rule if the file is approved. **Local:** don't turn off Smart App Control; send block events to IT. |
+| 5 | **File permissions** | Your right to run it; whether others can change the file or its folder; stray DLLs next to it | Shows whether it can run, and whether it could be swapped or made to load the wrong DLL | **Local:** move the file to a new folder in your own profile; grant yourself Read & Execute if needed. |
+
+The split scripts break these down further, with an action for each finding: [`Test-ExecutableSignature.ps1`](Test-ExecutableSignature.md) for group 2 and [`Test-ExecutableEnvironment.ps1`](Test-ExecutableEnvironment.md) for groups 1, 3, 4 and 5.
+
 ## Contents
 
+- [Summary of checks](#summary-of-checks)
 - [Quick start](#quick-start)
 - [Parameters](#parameters)
 - [Output and exit codes](#output-and-exit-codes)

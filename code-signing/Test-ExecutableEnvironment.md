@@ -12,9 +12,32 @@ Everything this script looks at depends on **your PC and how you got the file**:
 
 You can deal with these problems yourself, or with your IT department: download again, compare the hash, update or run antivirus, move the file to a safe folder, ask IT for an App Control rule. None of them need the publisher to change the file.
 
+## Summary of checks
+
+Each check answers one question about **this PC and this copy of the file**. When a check finds a problem, the last column tells you what it points to: what needs to change on your PC, in how you got the file, or in your company's policies.
+
+| # | Check | What it looks at | Why it helps | What to change locally if it fails |
+|---|---|---|---|---|
+| 1 | **Hash** | The file's SHA-256, compared with the hash the vendor publishes (`-ExpectedSha256`) | Proves you have exactly the file the vendor released, not a damaged or swapped copy | Download it again from the official site over HTTPS. If a mirror, proxy or file share was involved, get it directly from the vendor. |
+| 2 | **File name and type** | Hidden text-direction characters, double extensions (`report.pdf.exe`), and whether the content is really a program | Catches files disguised as documents | Delete the file. Turn on *File name extensions* in Explorer so disguises are visible. |
+| 3 | **Mark of the Web** | The hidden tag that records where the file was downloaded from (`HostUrl`, zone) | Shows the real source, and whether SmartScreen and Smart App Control will check the file | Wrong domain: get it from the official site. No mark: download with a browser or unzip with Windows' built-in tool, because some tools strip the mark. |
+| 4 | **Hidden data streams** | Extra NTFS streams attached to the file | Hidden streams can carry a payload | Inspect the stream, and remove it if you don't know why it's there. |
+| 5 | **Defender status** | Whether real-time protection is on, how old the definitions are, whether another antivirus is in charge | Tells you whether the antivirus scan can be trusted | Turn real-time protection on, update definitions (`Update-MpSignature`), or scan with your main antivirus. |
+| 6 | **Defender scan** | A scan of just this file, without deleting it | Finds known malware before it runs | Don't run it; delete it and run a full scan. |
+| 7 | **App Control (WDAC)** | Whether your PC enforces an App Control policy, and whether the file's signature would satisfy it | Predicts a block before you try, and tells you who can lift it | Ask IT to allow the file (publisher or hash rule in a supplemental policy) if it's approved. |
+| 8 | **Smart App Control** | Whether Smart App Control is on, and whether the file is validly signed | Predicts a block on Windows 11 home and small-business PCs | Don't turn Smart App Control off: it can't be turned back on without resetting Windows. Ask the publisher for a validly signed build. |
+| 9 | **AppLocker** | A dry run of your PC's AppLocker rules for this file and your account | Shows whether company rules would deny it | Ask IT to add an AppLocker rule if the file is approved. |
+| 10 | **Earlier block events** | The Code Integrity event log for blocks of this file in the last 30 days | Explains an earlier "this app has been blocked" message, and names the policy | Send the event to IT; it shows which rule to add. |
+| 11 | **Execute permission** | Whether your account is allowed to run the file | Explains "access denied" when you try to start it | Move the file to a folder you own, or grant yourself Read & Execute. |
+| 12 | **Who can change the file or folder** | Whether Everyone or Users can modify the file or create files next to it | Someone could swap the file after you check it, or plant a DLL it loads | Move the file to a new folder in your own profile and check it again there. |
+| 13 | **Stray DLLs** | DLL files in the same folder as the program | A program loads DLLs from its own folder first, so an old download could be loaded by mistake | Move the program to its own empty folder before running it. |
+
+The script reads whether the file's signature is valid only to make the App Control predictions (7–9). Problems with the signature itself are for the publisher to fix: see [`Test-ExecutableSignature.ps1`](Test-ExecutableSignature.md).
+
 ## Contents
 
-- [Why a local check](#why-a-separate-local-check)
+- [Why a local check](#why-a-local-check)
+- [Summary of checks](#summary-of-checks)
 - [Quick start](#quick-start)
 - [Parameters](#parameters)
 - [Output, actions and exit codes](#output-actions-and-exit-codes)
