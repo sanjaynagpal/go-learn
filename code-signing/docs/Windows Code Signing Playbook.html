@@ -284,7 +284,7 @@ footer{margin-top:56px;padding-top:18px;border-top:1px solid var(--line);font-si
   <div class="layers">
     <div class="layer"><b>UAC prompt</b><p>Shows "Verified publisher: Your Company" for a valid signature. Otherwise it shows "Unknown publisher" in a yellow prompt.</p></div>
     <div class="layer"><b>SmartScreen</b><p>Checks downloaded files. Its decision is based on reputation, which builds up against your publisher identity over time. Since 2024, EV certificates no longer get instant reputation. It only checks files with a <b>Mark of the Web</b>: the hidden <code>Zone.Identifier</code> stream browsers and mail clients add. Files an installer extracts, or copies from a USB stick or some unzip tools, have none and aren't checked.</p></div>
-    <div class="layer"><b>App Control (WDAC), AppLocker, Smart App Control</b><p>Corporate rules such as "allow only binaries signed by publisher X". This is how your clients' IT teams will allow-list you.</p></div>
+    <div class="layer"><b>App Control (WDAC), AppLocker, Smart App Control</b><p>Corporate rules such as "allow only binaries signed by publisher X". This is how your clients' IT teams will allow-list you. Older environments may still use Software Restriction Policies; a block there, or by AppLocker, shows &quot;This program is blocked by group policy&quot;.</p></div>
     <div class="layer"><b>Defender and EDR</b><p>Take the signature and reputation into account when deciding whether to flag or quarantine a file.</p></div>
   </div>
   <pre>Get-AuthenticodeSignature .\app.exe | Format-List *
@@ -644,7 +644,7 @@ Get-AppLockerFileInformation -Path .\app.exe |
     <thead><tr><th>Script</th><th>Checks</th><th>Who acts on it</th></tr></thead>
     <tbody>
       <tr><td><a href="../Test-ExecutableSignature.md"><code>Test-ExecutableSignature.ps1</code></a></td><td>Signature, certificate, timestamp, chain, revocation, publisher identity. Prints the days left until an untimestamped signature expires.</td><td>The publisher: every finding comes with the fix</td></tr>
-      <tr><td><a href="../Test-ExecutableEnvironment.md"><code>Test-ExecutableEnvironment.ps1</code></a></td><td>Hash, Mark of the Web, Defender scan, App Control and Smart App Control prediction, permissions</td><td>The user, or their IT team</td></tr>
+      <tr><td><a href="../Test-ExecutableEnvironment.md"><code>Test-ExecutableEnvironment.ps1</code></a></td><td>Hash, Mark of the Web, Defender scan, App Control and Smart App Control prediction, Group Policy blocks (Software Restriction Policies, AppLocker events), permissions</td><td>The user, or their IT team</td></tr>
       <tr><td><a href="../Test-ExecutableSafety.md"><code>Test-ExecutableSafety.ps1</code></a></td><td>Both together, in one report</td><td>-</td></tr>
     </tbody>
   </table></div>
@@ -664,7 +664,7 @@ Get-AppLockerFileInformation -Path .\app.exe |
   <ul class="tight col">
     <li>Exit code <code>2</code> (a broken, untrusted, untimestamped-and-expired or revoked signature) fails the job. Exit code <code>1</code> lets it pass with a warning.</li>
     <li>Check the installer <b>and</b> each embedded program: run the installer into a test folder first.</li>
-    <li>For customers who report a blocked install, <code>Test-ExecutableEnvironment.ps1</code> shows whether App Control, Smart App Control or Defender is the cause, and what their IT team can do.</li>
+    <li>For customers who report a blocked install, <code>Test-ExecutableEnvironment.ps1</code> shows whether App Control, Smart App Control, Group Policy (Software Restriction Policies or AppLocker: &quot;This program is blocked by group policy&quot;) or Defender is the cause, and what their IT team can do.</li>
   </ul>
 </section>
 

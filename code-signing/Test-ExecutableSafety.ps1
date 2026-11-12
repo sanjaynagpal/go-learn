@@ -15,7 +15,9 @@
       4. App Control     - App Control for Business (WDAC) user-mode enforcement, active CI policies,
                            Smart App Control state, AppLocker effective-policy test, and past
                            Code Integrity block or audit events for this file. Gives a prediction of
-                           whether the file will be blocked.
+                           whether the file will be blocked. Also the Group Policy blocks behind
+                           "This program is blocked by group policy": Software Restriction Policies
+                           level, AppLocker block events, Explorer DisallowRun/RestrictRun lists.
       5. Permissions     - Owner and ACL, whether you have Execute rights, whether broad groups
                            (Everyone, Users, ...) can modify the file or plant DLLs next to it.
 
@@ -596,6 +598,108 @@ try {
     } else {
         Add-Finding INFO 'AppControl' "AppLocker could not be evaluated: $($_.Exception.Message)"
     }
+}
+
+# ------------------------------------------------------------------ 4b. "Blocked by group policy"
+# Windows error 1260 (ERROR_ACCESS_DISABLED_BY_POLICY) comes from AppLocker or Software Restriction Policies.
+Write-Section 'Group Policy blocks (Software Restriction Policies, AppLocker events, Explorer lists)'
+
+$gpHint = 'Ask IT: "gpresult /h gp.html" (as Administrator) names the Group Policy Object that sets the rule.'
+
+# Software Restriction Policies: ask Windows which SRP level it would give this file, without running it.
+try {
+    if (-not ('SaferApi' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System; using System.Runtime.InteropServices;
+public static class SaferApi {
+  [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
+  public struct SAFER_CODE_PROPERTIES {
+    public uint cbSize; public uint dwCheckFlags; public string ImagePath; public IntPtr hImageFileHandle;
+    public uint UrlZoneId; [MarshalAs(UnmanagedType.ByValArray, SizeConst=64)] public byte[] ImageHash;
+    public uint dwImageHashSize; public long ImageSize; public uint HashAlgorithm; public IntPtr pByteBlock;
+    public IntPtr hWndParent; public uint dwWVTUIChoice; }
+  [DllImport("advapi32.dll", SetLastError=true)] static extern bool SaferIdentifyLevel(uint n, ref SAFER_CODE_PROPERTIES p, out IntPtr h, IntPtr r);
+  [DllImport("advapi32.dll", SetLastError=true)] static extern bool SaferGetLevelInformation(IntPtr h, int cls, out uint v, uint cb, out uint ret);
+  [DllImport("advapi32.dll")] static extern bool SaferCloseLevel(IntPtr h);
+  public static uint GetLevel(string path) {
+    var p = new SAFER_CODE_PROPERTIES(); p.cbSize = (uint)Marshal.SizeOf(p);
+    p.dwCheckFlags = 1 | 4 | 8;   // path, hash and certificate rules
+    p.ImagePath = path; p.ImageHash = new byte[64]; p.dwWVTUIChoice = 2;   // no UI
+    IntPtr h;
+    if (!SaferIdentifyLevel(1, ref p, out h, IntPtr.Zero)) throw new System.ComponentModel.Win32Exception();
+    try { uint v, r; if (!SaferGetLevelInformation(h, 1, out v, 4, out r)) throw new System.ComponentModel.Win32Exception(); return v; }
+    finally { SaferCloseLevel(h); } } }
+'@
+    }
+    $srpLevel = [SaferApi]::GetLevel($full)
+    $srpNames = @{ 0x0 = 'Disallowed'; 0x1000 = 'Constrained'; 0x10000 = 'Untrusted'; 0x20000 = 'Basic User'; 0x40000 = 'Unrestricted' }
+    $srpName = if ($srpNames.ContainsKey([int]$srpLevel)) { $srpNames[[int]$srpLevel] } else { 'Unknown' }
+    $srpText = 'Software Restriction Policies level: {0} (0x{1:X})' -f $srpName, $srpLevel
+    if ($exeRules) {
+        # When an AppLocker policy has rules, Windows ignores SRP.
+        Add-Finding INFO 'GroupPolicy' "$srpText. Not applied: AppLocker rules exist, and Windows then ignores SRP."
+    } elseif ($srpLevel -eq 0x40000) {
+        Add-Finding PASS 'GroupPolicy' "$srpText. SRP will not block this file."
+    } elseif ($srpLevel -le 0x10000) {
+        Add-Finding FAIL 'GroupPolicy' "$srpText. BLOCK EXPECTED: Windows will say ""This program is blocked by group policy"". $gpHint"
+    } else {
+        Add-Finding WARN 'GroupPolicy' "$srpText. The file will run, but without administrator rights, so an installer may fail. $gpHint"
+    }
+} catch {
+    Add-Finding INFO 'GroupPolicy' "Software Restriction Policies could not be evaluated: $($_.Exception.Message)"
+}
+
+# AppLocker evidence: did an earlier attempt to run this file get blocked (8004/8007) or audited (8003/8006)?
+$alLogs = @{ 'Microsoft-Windows-AppLocker/EXE and DLL' = 8003, 8004; 'Microsoft-Windows-AppLocker/MSI and Script' = 8006, 8007 }
+$alFound = $false; $alReadable = $false
+foreach ($log in $alLogs.Keys) {
+    try {
+        $evts = Get-WinEvent -FilterHashtable @{ LogName = $log; Id = $alLogs[$log]; StartTime = (Get-Date).AddDays(-30) } -MaxEvents 5000 -ErrorAction Stop |
+            Where-Object { $_.Message -like "*$name*" }
+        $alReadable = $true
+        foreach ($e in ($evts | Select-Object -First 5)) {
+            $alFound = $true
+            $what = if ($e.Id -in 8004, 8007) { 'BLOCKED by AppLocker' } else { 'would be blocked by AppLocker (audit only)' }
+            Add-Finding WARN 'GroupPolicy' ("{0:yyyy-MM-dd HH:mm} AppLocker event {1}: {2}. The event names the rule collection; send it to IT." -f $e.TimeCreated, $e.Id, $what)
+        }
+    } catch {
+        if ($_.Exception.Message -match 'No events were found') { $alReadable = $true }
+    }
+}
+if (-not $alFound) {
+    if ($alReadable) { Add-Finding INFO 'GroupPolicy' 'No AppLocker block or audit events for this file name in the last 30 days.' }
+    else { Add-Finding INFO 'GroupPolicy' 'AppLocker event logs are not available on this system.' }
+}
+
+# Explorer "Don't run specified Windows applications" / "Run only specified Windows applications".
+# These match on the file name only and only apply when the program is started from Explorer.
+$explorerListSet = $false
+foreach ($hive in 'HKCU', 'HKLM') {
+    $base = "${hive}:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer"
+    $props = Get-ItemProperty -Path $base -ErrorAction SilentlyContinue
+    if (-not $props) { continue }
+    if ($props.DisallowRun -eq 1 -or $props.RestrictRun -eq 1) { $explorerListSet = $true }
+    if ($props.DisallowRun -eq 1) {
+        $list = @((Get-ItemProperty -Path "$base\DisallowRun" -ErrorAction SilentlyContinue).PSObject.Properties |
+            Where-Object { $_.Name -notlike 'PS*' } | ForEach-Object { "$($_.Value)" })
+        if ($list -contains $name) {
+            Add-Finding FAIL 'GroupPolicy' "BLOCK EXPECTED: '$name' is on the ""Don't run specified Windows applications"" list ($hive). Explorer will refuse to start it. $gpHint"
+        } else {
+            Add-Finding INFO 'GroupPolicy' "Explorer DisallowRun list is active ($hive, $($list.Count) names); this file name is not on it."
+        }
+    }
+    if ($props.RestrictRun -eq 1) {
+        $list = @((Get-ItemProperty -Path "$base\RestrictRun" -ErrorAction SilentlyContinue).PSObject.Properties |
+            Where-Object { $_.Name -notlike 'PS*' } | ForEach-Object { "$($_.Value)" })
+        if ($list -contains $name) {
+            Add-Finding PASS 'GroupPolicy' "'$name' is on the ""Run only specified Windows applications"" list ($hive)."
+        } else {
+            Add-Finding FAIL 'GroupPolicy' "BLOCK EXPECTED: only listed applications may run from Explorer ($hive), and '$name' is not on the list. $gpHint"
+        }
+    }
+}
+if (-not $explorerListSet) {
+    Add-Finding PASS 'GroupPolicy' 'No Explorer "Don''t run" or "Run only" application lists are set.'
 }
 
 # ------------------------------------------------------------------ 5. permissions

@@ -8,6 +8,7 @@ Everything this script looks at depends on **your PC and how you got the file**:
 - how it was downloaded (Mark of the Web, hash),
 - the state of your antivirus,
 - the App Control, Smart App Control and AppLocker policies on this machine,
+- the Group Policy software restrictions that cause "This program is blocked by group policy",
 - the folder and permissions the file sits in.
 
 You can deal with these problems yourself, or with your IT department: download again, compare the hash, update or run antivirus, move the file to a safe folder, ask IT for an App Control rule. None of them need the publisher to change the file.
@@ -28,9 +29,12 @@ Each check answers one question about **this PC and this copy of the file**. Whe
 | 8 | **Smart App Control** | Whether Smart App Control is on, and whether the file is validly signed | Predicts a block on Windows 11 home and small-business PCs | Don't turn Smart App Control off: it can't be turned back on without resetting Windows. Ask the publisher for a validly signed build. |
 | 9 | **AppLocker** | A dry run of your PC's AppLocker rules for this file and your account | Shows whether company rules would deny it | Ask IT to add an AppLocker rule if the file is approved. |
 | 10 | **Earlier block events** | The Code Integrity event log for blocks of this file in the last 30 days | Explains an earlier "this app has been blocked" message, and names the policy | Send the event to IT; it shows which rule to add. |
-| 11 | **Execute permission** | Whether your account is allowed to run the file | Explains "access denied" when you try to start it | Move the file to a folder you own, or grant yourself Read & Execute. |
-| 12 | **Who can change the file or folder** | Whether Everyone or Users can modify the file or create files next to it | Someone could swap the file after you check it, or plant a DLL it loads | Move the file to a new folder in your own profile and check it again there. |
-| 13 | **Stray DLLs** | DLL files in the same folder as the program | A program loads DLLs from its own folder first, so an old download could be loaded by mistake | Move the program to its own empty folder before running it. |
+| 11 | **Software Restriction Policies** | The level Windows' SRP rules give this file (Disallowed, Basic User, Unrestricted), asked from Windows without running it | Predicts "This program is blocked by group policy" before you try | Nothing you can change yourself: renaming or moving the file to get round a rule breaks company policy. Send the result to IT, who can add an exception in the Group Policy Object that sets it. |
+| 12 | **AppLocker block events** | The AppLocker event logs for blocks (8004, 8007) or audit-only hits (8003, 8006) of this file in the last 30 days | Explains an earlier "blocked by group policy" message, and names the rule collection and user | Send the event to IT; it shows which AppLocker rule to add. |
+| 13 | **Explorer application lists** | Group Policy's "Don't run specified Windows applications" and "Run only specified Windows applications" lists | Explains why double-clicking the file is refused ("restrictions in effect on this computer") | Ask IT to change the list if the file is approved. |
+| 14 | **Execute permission** | Whether your account is allowed to run the file | Explains "access denied" when you try to start it | Move the file to a folder you own, or grant yourself Read & Execute. |
+| 15 | **Who can change the file or folder** | Whether Everyone or Users can modify the file or create files next to it | Someone could swap the file after you check it, or plant a DLL it loads | Move the file to a new folder in your own profile and check it again there. |
+| 16 | **Stray DLLs** | DLL files in the same folder as the program | A program loads DLLs from its own folder first, so an old download could be loaded by mistake | Move the program to its own empty folder before running it. |
 
 The script reads whether the file's signature is valid only to make the App Control predictions (7–9). Problems with the signature itself are for the publisher to fix: see [`Test-ExecutableSignature.ps1`](Test-ExecutableSignature.md).
 
@@ -46,7 +50,8 @@ The script reads whether the file's signature is valid only to make the App Cont
   - [1. File identity](#1-file-identity)
   - [2. Microsoft Defender scan](#2-microsoft-defender-scan)
   - [3. App Control (WDAC, Smart App Control, AppLocker)](#3-app-control-wdac-smart-app-control-applocker)
-  - [4. File permissions](#4-file-permissions)
+  - [4. Group Policy blocks ("This program is blocked by group policy")](#4-group-policy-blocks-this-program-is-blocked-by-group-policy)
+  - [5. File permissions](#5-file-permissions)
 - [Mark of the Web explained](#mark-of-the-web-explained)
 - [Worked example](#worked-example)
 - [Limitations](#limitations)
@@ -125,6 +130,10 @@ Every WARN and FAIL the script can report, and what to do:
 | Smart App Control on, file not validly signed | WARN | You, Publisher | Don't turn Smart App Control off; it can't be turned back on without resetting Windows. Ask the publisher for a validly signed build. |
 | Earlier Code Integrity block or audit events | WARN | IT admin | Review the event (it names the policy and rule) and add a rule if the file is approved. |
 | AppLocker would deny it | WARN | IT admin | Add an AppLocker publisher or hash rule if the file is approved. |
+| SRP level Disallowed or Untrusted | FAIL | You, IT admin | You: don't try to get round it; send the result to IT. IT: find the GPO with `gpresult /h gp.html` and add an Unrestricted rule if the file is approved. |
+| SRP level Basic User | WARN | IT admin | The file runs without admin rights, so an installer may fail. Add an Unrestricted SRP rule if it needs admin rights and is approved. |
+| Earlier AppLocker block or audit events | WARN | IT admin | The event names the rule collection and user; add a rule if the file is approved. |
+| File name on Explorer's "Don't run" list, or missing from its "Run only" list | FAIL | IT admin | Change the list in *User Configuration > Administrative Templates > System* if the file is approved. |
 | Execute explicitly denied | WARN | IT admin | A deny rule is usually deliberate; ask IT. |
 | No Execute permission | WARN | You | Move it to a folder you own, or `icacls <file> /grant <you>:(RX)`. |
 | Everyone/Users can modify the file | WARN | You | Move it to a new folder in your profile and run the check again there. |
@@ -215,7 +224,35 @@ Test-AppLockerPolicy -XmlPolicy <temp.xml> -Path <file> -User <you>
 
 This is a real dry run: it returns `Allowed`, `Denied` or `DeniedByDefault` without executing anything. The script also reports each collection's enforcement mode and whether the Application Identity service (`AppIDSvc`) is running; AppLocker only enforces when that service runs. The AppLocker module doesn't exist on Windows Home, so there it's reported as not available.
 
-### 4. File permissions
+### 4. Group Policy blocks ("This program is blocked by group policy")
+
+That message is Windows error 1260 (`ERROR_ACCESS_DISABLED_BY_POLICY`). It comes from **Software Restriction Policies** or **AppLocker**, both set through Group Policy. App Control (WDAC) and Smart App Control show different messages and are covered in section 3. The script checks three sources:
+
+**Software Restriction Policies (SRP).** The script asks Windows which SRP level it would give the file, with the same API Windows uses at launch (`SaferIdentifyLevel` in `advapi32.dll`, checking path, hash and certificate rules, with no UI). Nothing is executed.
+
+| Level | Value | Result |
+|---|---|---|
+| Unrestricted | `0x40000` | PASS: SRP allows it. |
+| Basic User | `0x20000` | WARN: it runs, but without administrator rights. |
+| Untrusted / Constrained | `0x10000` / `0x1000` | FAIL: treated as blocked. |
+| Disallowed | `0x0` | FAIL: "This program is blocked by group policy". |
+
+When an AppLocker policy has rules, Windows ignores SRP, so the level is then reported as INFO only. The rules themselves are under `HKLM\SOFTWARE\Policies\Microsoft\Windows\Safer\CodeIdentifiers` (and the same key under `HKCU`).
+
+**AppLocker events.** Section 3 predicts the AppLocker decision. This check looks for evidence that an earlier attempt to run the file was blocked, in the last 30 days:
+
+| Log | Event | Meaning |
+|---|---|---|
+| `Microsoft-Windows-AppLocker/EXE and DLL` | 8004 | Blocked |
+| `Microsoft-Windows-AppLocker/EXE and DLL` | 8003 | Would have been blocked (audit only) |
+| `Microsoft-Windows-AppLocker/MSI and Script` | 8007 | Blocked |
+| `Microsoft-Windows-AppLocker/MSI and Script` | 8006 | Would have been blocked (audit only) |
+
+**Explorer application lists.** The policies *Don't run specified Windows applications* (`DisallowRun`) and *Run only specified Windows applications* (`RestrictRun`), read from `Software\Microsoft\Windows\CurrentVersion\Policies\Explorer` in HKCU and HKLM. They match on the file name only, and only apply when the program is started from Explorer. The message is "This operation has been cancelled due to restrictions in effect on this computer."
+
+**Finding the policy.** Every action for IT points to `gpresult /h gp.html`, run as Administrator. The report names the Group Policy Object that sets each rule, so IT knows where to add an exception.
+
+### 5. File permissions
 
 The ACL is read with `Get-Acl` and `GetAccessRules(..., [SecurityIdentifier])`. Using SIDs instead of names makes the checks work in any Windows language.
 
@@ -284,6 +321,11 @@ An unsigned test program downloaded from the internet. A hidden data stream was 
   [INFO] Signature status used for the prediction: NotSigned. Details: Test-ExecutableSignature.ps1
   [PASS] No enforced user-mode App Control policy: WDAC will not block this file.
 
+== Group Policy blocks (Software Restriction Policies, AppLocker events, Explorer lists) ==
+  [PASS] Software Restriction Policies level: Unrestricted (0x40000). SRP will not block this file.
+  [INFO] No AppLocker block or audit events for this file name in the last 30 days.
+  [PASS] No Explorer "Don't run" or "Run only" application lists are set.
+
 == File permissions ==
   [WARN] 1 DLL file(s) sit next to the program (stray.dll). A program can load DLLs from its own folder.
          -> You: Create a new folder in your own profile (e.g. %USERPROFILE%\Installers\<name>), move the file there, and run it from there. ...
@@ -305,7 +347,8 @@ Everything here can be fixed locally: download again, remove or inspect the stre
 
 - **No check can prove a file is safe.** A clean result means none of these checks found a problem.
 - **The signature isn't judged here.** A file can pass every local check and still have a broken, untrusted or untimestamped signature. Run [`Test-ExecutableSignature.ps1`](Test-ExecutableSignature.md) too.
-- **App Control results are predictions.** Windows has no dry-run API for WDAC or Smart App Control; only AppLocker can be truly tested.
+- **App Control results are predictions.** Windows has no dry-run API for WDAC or Smart App Control; only AppLocker and Software Restriction Policies can be truly tested.
+- **Group Policy can change after the check.** Policies refresh every 90 minutes or so, and IT can add rules at any time, so a PASS today doesn't guarantee the file runs next week.
 - **SmartScreen reputation can't be queried** from a script; it's checked when the file is launched.
 - **The execute-permission check is an approximation** based on the ACL and your groups.
 - Some details (the Code Integrity log, the full CiTool output) need Administrator rights.

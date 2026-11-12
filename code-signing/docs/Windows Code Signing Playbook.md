@@ -74,7 +74,7 @@ Checks downloaded files. Its decision is based on reputation, which builds up ag
 
 **App Control (WDAC), AppLocker, Smart App Control**
 
-Corporate rules such as "allow only binaries signed by publisher X". This is how your clients' IT teams will allow-list you.
+Corporate rules such as "allow only binaries signed by publisher X". This is how your clients' IT teams will allow-list you. Older environments may still use Software Restriction Policies; a block there, or by AppLocker, shows "This program is blocked by group policy".
 
 **Defender and EDR**
 
@@ -397,7 +397,7 @@ Three PowerShell scripts in this repository check a file without running it. Use
 | Script | Checks | Who acts on it |
 | --- | --- | --- |
 | [`Test-ExecutableSignature.ps1`](../Test-ExecutableSignature.md) | Signature, certificate, timestamp, chain, revocation, publisher identity. Prints the days left until an untimestamped signature expires. | The publisher: every finding comes with the fix |
-| [`Test-ExecutableEnvironment.ps1`](../Test-ExecutableEnvironment.md) | Hash, Mark of the Web, Defender scan, App Control and Smart App Control prediction, permissions | The user, or their IT team |
+| [`Test-ExecutableEnvironment.ps1`](../Test-ExecutableEnvironment.md) | Hash, Mark of the Web, Defender scan, App Control and Smart App Control prediction, Group Policy blocks (Software Restriction Policies, AppLocker events), permissions | The user, or their IT team |
 | [`Test-ExecutableSafety.ps1`](../Test-ExecutableSafety.md) | Both together, in one report | - |
 
 ### As a release gate
@@ -419,6 +419,6 @@ release-check:
 
 - Exit code `2` (a broken, untrusted, untimestamped-and-expired or revoked signature) fails the job. Exit code `1` lets it pass with a warning.
 - Check the installer **and** each embedded program: run the installer into a test folder first.
-- For customers who report a blocked install, `Test-ExecutableEnvironment.ps1` shows whether App Control, Smart App Control or Defender is the cause, and what their IT team can do.
+- For customers who report a blocked install, `Test-ExecutableEnvironment.ps1` shows whether App Control, Smart App Control, Group Policy (Software Restriction Policies or AppLocker: "This program is blocked by group policy") or Defender is the cause, and what their IT team can do.
 
 Reflects CA/Browser Forum rules, Microsoft behaviour and jsign 7.6 as of November 2026. Confirm the specifics with your CA before relying on them: maximum validity, Trusted Signing eligibility and accepted HSMs all change.

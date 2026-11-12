@@ -16,9 +16,10 @@ The script runs five groups of checks. The last two columns show why each helps 
 | 2 | **Digital signature** | Signature status, signer, certificate, timestamp, chain to a trusted root, revocation | Proves who published the file and that it hasn't changed since | **Publisher**, for most problems. **Local side:** a damaged download (download again); a company CA your PC lacks (IT deploys it); revocation can't be checked (allow the CA's CRL/OCSP addresses through the proxy); no timestamp (note the date the file will stop being trusted). |
 | 3 | **Microsoft Defender** | Real-time protection, definition age, a scan of just this file | Finds known malware, and tells you whether the scan itself can be trusted | **Local:** turn protection on, update definitions, scan with your main antivirus; delete the file if a threat is found. |
 | 4 | **App Control** | WDAC enforcement, Smart App Control, AppLocker rules, earlier block events | Predicts whether Windows will block the file, and names the policy | **IT:** add a publisher or hash rule if the file is approved. **Local:** don't turn off Smart App Control; send block events to IT. |
+| 4b | **Group Policy blocks** | Software Restriction Policies level, AppLocker block events, Explorer's "Don't run" / "Run only" lists | Predicts or explains "This program is blocked by group policy" | **IT:** find the rule with `gpresult /h gp.html` and add an exception if the file is approved. **Local:** don't try to get round it by renaming or moving the file. |
 | 5 | **File permissions** | Your right to run it; whether others can change the file or its folder; stray DLLs next to it | Shows whether it can run, and whether it could be swapped or made to load the wrong DLL | **Local:** move the file to a new folder in your own profile; grant yourself Read & Execute if needed. |
 
-The split scripts break these down further, with an action for each finding: [`Test-ExecutableSignature.ps1`](Test-ExecutableSignature.md) for group 2 and [`Test-ExecutableEnvironment.ps1`](Test-ExecutableEnvironment.md) for groups 1, 3, 4 and 5.
+The split scripts break these down further, with an action for each finding: [`Test-ExecutableSignature.ps1`](Test-ExecutableSignature.md) for group 2 and [`Test-ExecutableEnvironment.ps1`](Test-ExecutableEnvironment.md) for groups 1, 3, 4, 4b and 5.
 
 ## Contents
 
@@ -31,6 +32,7 @@ The split scripts break these down further, with an action for each finding: [`T
   - [2. Digital signature](#2-digital-signature)
   - [3. Microsoft Defender scan](#3-microsoft-defender-scan)
   - [4. App Control (WDAC, Smart App Control, AppLocker)](#4-app-control-wdac-smart-app-control-applocker)
+  - [4b. Group Policy blocks ("This program is blocked by group policy")](#4b-group-policy-blocks-this-program-is-blocked-by-group-policy)
   - [5. File permissions](#5-file-permissions)
 - [Mark of the Web explained](#mark-of-the-web-explained)
 - [Worked example](#worked-example)
@@ -223,6 +225,16 @@ Test-AppLockerPolicy -XmlPolicy <temp.xml> -Path <file> -User <you>
 
 This is a real dry run: it returns `Allowed`, `Denied` or `DeniedByDefault` without executing anything. The script also reports each collection's enforcement mode and whether the Application Identity service (`AppIDSvc`) is running; AppLocker only enforces when that service runs. The AppLocker module doesn't exist on Windows Home, so there it's reported as not available.
 
+### 4b. Group Policy blocks ("This program is blocked by group policy")
+
+That message is Windows error 1260 (`ERROR_ACCESS_DISABLED_BY_POLICY`). It comes from **Software Restriction Policies** or **AppLocker**, both set through Group Policy. WDAC and Smart App Control show different messages and are covered above. The script checks three sources, without running the file:
+
+- **Software Restriction Policies (SRP).** Asks Windows which SRP level it would give the file, with the API Windows uses at launch (`SaferIdentifyLevel`, checking path, hash and certificate rules). `Unrestricted` (`0x40000`) is a PASS. `Basic User` (`0x20000`) is a WARN: it runs without administrator rights, so an installer may fail. `Untrusted`, `Constrained` or `Disallowed` (`0x0`) is a FAIL: "This program is blocked by group policy". When AppLocker has rules, Windows ignores SRP, so the level is then INFO only.
+- **AppLocker events.** Looks for blocks (8004 in `Microsoft-Windows-AppLocker/EXE and DLL`, 8007 in `MSI and Script`) and audit-only hits (8003, 8006) of this file name in the last 30 days. This explains a block someone already saw.
+- **Explorer application lists.** The policies *Don't run specified Windows applications* (`DisallowRun`) and *Run only specified Windows applications* (`RestrictRun`) in HKCU and HKLM. They match on the file name only, and only apply when the program is started from Explorer.
+
+Each block points IT to `gpresult /h gp.html`, run as Administrator, which names the Group Policy Object that sets the rule. [`Test-ExecutableEnvironment.ps1`](Test-ExecutableEnvironment.md) runs the same checks, with a separate action for you and for IT on each finding.
+
 ### 5. File permissions
 
 The ACL is read with `Get-Acl` and `GetAccessRules(..., [SecurityIdentifier])`. Using SIDs instead of names makes the checks work in any Windows language.
@@ -291,6 +303,8 @@ A vendor's client launcher downloaded from the vendor's own site produced this:
 ...
   [PASS] Defender found no threats in the file.
   [PASS] No enforced user-mode App Control policy: WDAC will not block this file.
+  [PASS] Software Restriction Policies level: Unrestricted (0x40000). SRP will not block this file.
+  [PASS] No Explorer "Don't run" or "Run only" application lists are set.
 
   VERDICT: DO NOT RUN.
 ```
@@ -881,7 +895,7 @@ build-installer:
 ## Limitations
 
 - **No check proves a file is safe.** A clean result means none of these checks found a problem. Signed malware exists, and so does malware Defender doesn't detect yet.
-- **App Control results are predictions.** Windows has no dry-run API for WDAC or Smart App Control. Only AppLocker can be truly tested.
+- **App Control results are predictions.** Windows has no dry-run API for WDAC or Smart App Control. Only AppLocker and Software Restriction Policies can be truly tested.
 - **SmartScreen reputation can't be queried** from a script. It's only checked when the file is launched.
 - **Only the primary signature is examined.** Files with several signatures (e.g. SHA-1 plus SHA-256) are judged by the first.
 - **The execute-permission check is an approximation** based on the ACL and your groups.

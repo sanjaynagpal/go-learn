@@ -27,7 +27,7 @@ Most signature problems can only be fixed by the publisher, but several have a *
 | 8 | **Embedded chain** | Whether the signature carries the intermediate CA, or only the signer's certificate | Without it, the file validates only on PCs that already have the intermediate | IT can deploy the intermediate CA as a stopgap; the real fix is a re-signed build. |
 | 9 | **Publisher identity** | The signer against `-ExpectedPublisher`, and against the company name in the file | Catches files that pretend to come from a known vendor | Nothing to change locally. If it doesn't match, don't run it, and download only from the vendor's official site. |
 
-For the checks you can act on yourself (antivirus, App Control, permissions, where the file came from), see [`Test-ExecutableEnvironment.ps1`](Test-ExecutableEnvironment.md).
+For the checks you can act on yourself (antivirus, App Control, Group Policy blocks, permissions, where the file came from), see [`Test-ExecutableEnvironment.ps1`](Test-ExecutableEnvironment.md).
 
 ## Contents
 
