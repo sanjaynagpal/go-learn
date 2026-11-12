@@ -2,6 +2,10 @@
 
 A PowerShell script that checks a downloaded Windows executable **before you run it**. It never executes the file. It reads the file, its signature, its metadata and the machine's security settings, then gives a verdict.
 
+> **Split versions with actions.** The same checks are also available as two scripts that say who must act on each finding:
+> - [`Test-ExecutableSignature.ps1`](Test-ExecutableSignature.md): signature and certificate only. Problems the **publisher** must fix.
+> - [`Test-ExecutableEnvironment.ps1`](Test-ExecutableEnvironment.md): everything else on this PC. Problems **you** or your **IT administrator** can fix.
+
 ## Contents
 
 - [Quick start](#quick-start)

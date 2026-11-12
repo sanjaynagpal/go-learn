@@ -139,8 +139,8 @@ ol.flow li:nth-child(2){animation-delay:2s} ol.flow li:nth-child(3){animation-de
 ol.flow li:nth-child(4){animation-delay:6s} ol.flow li:nth-child(5){animation-delay:8s}
 @keyframes stage{0%,20%{border-color:var(--accent);box-shadow:inset 0 -3px 0 var(--accent)}24%,100%{border-color:var(--line);box-shadow:inset 0 -3px 0 transparent}}
 .checklist{list-style:none;margin:0;padding:0;display:grid;gap:8px}
-.checklist li{display:grid;grid-template-columns:20px 1fr;gap:10px}
-.checklist li::before{content:"";width:14px;height:14px;margin-top:5px;border:2px solid var(--accent);border-radius:3px}
+.checklist li{position:relative;padding-left:30px}
+.checklist li::before{content:"";position:absolute;left:0;top:5px;width:14px;height:14px;border:2px solid var(--accent);border-radius:3px}
 
 footer{margin-top:56px;padding-top:18px;border-top:1px solid var(--line);font-size:.85rem;color:var(--muted)}
 
@@ -152,6 +152,31 @@ footer{margin-top:56px;padding-top:18px;border-top:1px solid var(--line);font-si
   .motion{display:none}
   .tick,ol.flow li{animation:none}
 }
+
+/* Print / PDF: light colors, wrapped code, no scroll areas or animation, keep blocks whole. */
+@page{size:A4;margin:14mm 13mm}
+@media print{
+  :root{--bg:#FFFFFF;--surface:#FFFFFF;--ink:#13212B;--muted:#4A5961;--line:#C9D3D8;
+    --accent:#0B7A66;--accent-soft:#DCF0EA;--warn:#9A5800;--warn-soft:#FAEBD4;
+    --bad:#B3261E;--bad-soft:#F8DEDB;--code:#EEF2F4;color-scheme:light}
+  *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  body{font-size:10.5pt;line-height:1.5}
+  .wrap{max-width:none;padding:0}
+  .col{max-width:none}
+  .motion,.tl-controls{display:none}
+  .tick,ol.flow li{animation:none!important}
+  ol.flow li{border-color:var(--line);box-shadow:none}
+  pre{white-space:pre-wrap;overflow-wrap:anywhere;overflow:visible;font-size:8.6pt}
+  .tbl,.fig{overflow:visible}
+  table{min-width:0;font-size:9pt}
+  th,td{padding:7px 9px}
+  .fig svg{min-width:0}
+  section{padding-block:22px 4px;gap:12px}
+  h2,h3{break-after:avoid}
+  pre,figure,.card,.panel,.short,.layer,tr,.tl-row,ol.flow,ol.checks li{break-inside:avoid}
+  nav.toc a{border-bottom:0}
+  a{color:var(--accent);text-decoration:none}
+}
 </style>
 
 <div class="wrap">
@@ -162,12 +187,15 @@ footer{margin-top:56px;padding-top:18px;border-top:1px solid var(--line);font-si
   <nav class="toc" aria-label="Sections">
     <a href="#proves">What it proves</a><a href="#verify">How Windows checks</a><a href="#expiry">Expiry</a>
     <a href="#obtain">Getting &amp; monitoring</a><a href="#clients">What clients see</a><a href="#hsm">HSM + GitLab CI</a>
+    <a href="#timestamp">Timestamping</a><a href="#tsa">TSA unreachable</a><a href="#nested">Installers</a>
+    <a href="#allowlist">Allow-listing</a><a href="#release-check">Checking a release</a>
   </nav>
   <div class="short">
     <div class="eyebrow">In short</div>
     <ul>
       <li>A signature proves <b>who</b> published the file and that it is <b>unchanged</b>. It does not prove the code is safe.</li>
       <li>Always <b>timestamp</b> signatures. Then binaries stay valid after the certificate expires.</li>
+      <li><b>Check the signed file, not the configuration.</b> A TSA URL in the pipeline doesn't prove the file is timestamped, and the full certificate chain must be embedded. Verify both after signing and fail the job if either is missing.</li>
       <li>Certificates now last at most about 15 months, so renewal is routine. Make the pipeline refuse to sign with an expired certificate.</li>
       <li>Since June 2023, publicly trusted signing keys <b>must</b> be kept in certified hardware. The CI job asks the HSM to sign; it never holds the key.</li>
       <li>In managed corporate environments, unsigned or badly signed binaries are usually blocked outright.</li>
@@ -255,7 +283,7 @@ footer{margin-top:56px;padding-top:18px;border-top:1px solid var(--line);font-si
   <h3>Then each layer applies its own policy</h3>
   <div class="layers">
     <div class="layer"><b>UAC prompt</b><p>Shows "Verified publisher: Your Company" for a valid signature. Otherwise it shows "Unknown publisher" in a yellow prompt.</p></div>
-    <div class="layer"><b>SmartScreen</b><p>Checks downloaded files. Its decision is based on reputation, which builds up against your publisher identity over time. Since 2024, EV certificates no longer get instant reputation.</p></div>
+    <div class="layer"><b>SmartScreen</b><p>Checks downloaded files. Its decision is based on reputation, which builds up against your publisher identity over time. Since 2024, EV certificates no longer get instant reputation. It only checks files with a <b>Mark of the Web</b>: the hidden <code>Zone.Identifier</code> stream browsers and mail clients add. Files an installer extracts, or copies from a USB stick or some unzip tools, have none and aren't checked.</p></div>
     <div class="layer"><b>App Control (WDAC), AppLocker, Smart App Control</b><p>Corporate rules such as "allow only binaries signed by publisher X". This is how your clients' IT teams will allow-list you.</p></div>
     <div class="layer"><b>Defender and EDR</b><p>Take the signature and reputation into account when deciding whether to flag or quarantine a file.</p></div>
   </div>
@@ -283,6 +311,8 @@ signtool verify /pa /v app.exe</pre>
     <li><b>Revocation is different from expiry.</b> If a certificate is revoked, signatures timestamped after the revocation date fail. If the key was compromised, the CA may backdate the revocation, which also breaks older releases.</li>
     <li><b>Expired means you cannot sign.</b> No valid new signature can be made with an expired certificate. You need the renewed one.</li>
     <li><b>Use SHA-256 throughout:</b> <code>signtool sign /fd sha256 /tr http://timestamp.digicert.com /td sha256 …</code></li>
+    <li><b>Lifetime Signing EKU is the exception.</b> If the certificate carries it (<code>1.3.6.1.4.1.311.10.3.13</code>), signatures expire with the certificate even when timestamped. Check before you buy or renew.</li>
+    <li><b>Test it before it happens.</b> Set a test VM's clock past the certificate's expiry date, then run <code>signtool verify /pa /v</code>, <code>Test-ExecutableSignature.ps1</code> (section 11) and the installer itself.</li>
   </ul>
 </section>
 
@@ -291,7 +321,7 @@ signtool verify /pa /v app.exe</pre>
   <div class="cards">
     <div class="card"><span class="pill ok">Fits external clients</span><h3>Public CA</h3><p>DigiCert, Sectigo, GlobalSign, SSL.com. <b>OV</b> (Organization Validated) is standard; <b>EV</b> (Extended Validation) has stricter vetting, and some customers' procurement teams still ask for it. Expect the CA to check business registration and D-U-N-S, and to call back a verified phone number.</p></div>
     <div class="card"><span class="pill ok">Simplest for CI</span><h3>Microsoft Trusted Signing</h3><p>Being renamed Azure Artifact Signing. Microsoft verifies your organization and holds the keys in its own HSMs. Certificates last about 3 days and are issued automatically, so there is almost no expiry to manage. Only organizations in certain countries are eligible, so check yours first.</p></div>
-    <div class="card"><span class="pill warn">Internal only</span><h3>Enterprise CA (AD CS)</h3><p>Only trusted on machines that trust your internal root. Your clients' machines don't, so this does not suit software you ship to them.</p></div>
+    <div class="card"><span class="pill warn">Internal only</span><h3>Enterprise CA (AD CS)</h3><p>Only trusted on machines that trust your internal root. Your clients' machines don't, so this does not suit software you ship to them.</p><p><b>Never sign production releases with a test (UAT) CA.</b> Keep the CA's CRL/OCSP addresses reachable by every user, or revocation checks fail. If you also run an internal TSA, client PCs must trust its root as well, or the timestamp is ignored.</p></div>
   </div>
   <h3>Making sure an expired certificate is never used</h3>
   <ul class="tight col">
@@ -312,12 +342,17 @@ DAYS=$(( ($(date -d "$EXP" +%s) - $(date +%s)) / 86400 ))
     <thead><tr><th>Artifact</th><th>Standard Windows</th><th>Managed corporate estate</th></tr></thead>
     <tbody>
       <tr><td>Signed and timestamped; certificate expired later</td><td><span class="pill ok">Valid</span> Verified publisher</td><td>Allowed by publisher rules</td></tr>
-      <tr><td>Signed without a timestamp; certificate now expired</td><td><span class="pill bad">Invalid</span> "A required certificate is not within its validity period"</td><td>Blocked; can look like tampering</td></tr>
+      <tr><td>Signed without a timestamp; certificate now expired</td><td><span class="pill bad">Invalid</span> "A required certificate is not within its validity period". A double-click still runs it, but UAC shows "Unknown publisher" and <b>Smart App Control blocks it</b>.</td><td>App Control (WDAC) publisher rules <b>usually still match</b>, unless the policy sets option 20. Signature checks in updaters fail, and EDR treats it as unsigned; it can look like tampering.</td></tr>
       <tr><td>Signed with an already-expired certificate</td><td><span class="pill bad">Invalid</span> Signature fails verification</td><td>Blocked, and likely flagged by security tools</td></tr>
-      <tr><td>Signed; certificate later revoked</td><td><span class="pill bad">Invalid</span> for signatures after the revocation date</td><td>Blocked</td></tr>
+      <tr><td>Signed; certificate later revoked</td><td><span class="pill bad">Invalid</span> for signatures after the revocation date; Smart App Control blocks them</td><td>Smart App Control and EDR react at once. App Control treats it as unsigned when option 20 is set.</td></tr>
       <tr><td>Unsigned</td><td><span class="pill warn">Unknown publisher</span> SmartScreen "Windows protected your PC"; Edge may warn on download</td><td>Usually blocked by App Control or Smart App Control, and rejected at security intake</td></tr>
     </tbody>
   </table></div>
+  <ul class="tight col">
+    <li><b>App Control option 20</b> (<code>Enabled:Revoked Expired As Unsigned</code>) treats files signed with a revoked certificate, or with an expired certificate that carries the <i>Lifetime Signing</i> EKU (<code>1.3.6.1.4.1.311.10.3.13</code>), as unsigned. Without it, App Control doesn't reject a signature just because the certificate expired.</li>
+    <li><b>Lifetime Signing EKU:</b> signatures made with such a certificate expire with it <b>even when timestamped</b>. Code-signing certificates normally carry only the Code Signing EKU.</li>
+    <li>Component by component (UAC policy, SmartScreen, AppLocker, EDR, your own update code): see <a href="../Test-ExecutableSignature.md#runtime-impact-of-a-missing-timestamp">Runtime impact of a missing timestamp</a>.</li>
+  </ul>
 </section>
 
 <section id="hsm">
@@ -327,7 +362,7 @@ DAYS=$(( ($(date -d "$EXP" +%s) - $(date +%s)) / 86400 ))
     <li><b>Build</b><span>compile on a protected tag</span></li>
     <li><b>Check expiry</b><span>fail if expiring soon</span></li>
     <li><b>Sign</b><span>OIDC → HSM, with timestamp</span></li>
-    <li><b>Verify</b><span>signature and timestamp present</span></li>
+    <li><b>Verify</b><span>timestamp and full chain present</span></li>
     <li><b>Publish</b><span>HTTPS, with SHA-256 hashes</span></li>
   </ol>
   <figure>
@@ -399,12 +434,21 @@ DAYS=$(( ($(date -d "$EXP" +%s) - $(date +%s)) / 86400 ))
   script:
     - az login --service-principal -u "$AZ_CLIENT_ID" -t "$AZ_TENANT_ID" --federated-token "$AZURE_JWT"
     - ./check-cert-expiry.sh             # fails if expired or close to expiry
+    - sh ci/check-tsa.sh "$TSA_URLS"     # fails if no TSA answers (section 07)
     - TOKEN=$(az account get-access-token --resource https://vault.azure.net --query accessToken -o tsv)
     - jsign --storetype AZUREKEYVAULT --keystore "$KV" --storepass "$TOKEN" --alias "$CERT"
-        --tsaurl http://timestamp.digicert.com --tsmode RFC3161 --alg SHA-256 dist/app.exe
-    - osslsigncode verify dist/app.exe   # confirm signature + timestamp
+        --certfile "$CHAIN_PEM"
+        --tsaurl "$TSA_URLS" --tsmode RFC3161 --tsretries 5 --tsretrywait 15
+        --alg SHA-256 dist/app.exe
+    - sh ci/verify-signature.sh dist/app.exe   # fails without timestamp or full chain
+  variables:
+    TSA_URLS: "http://timestamp.digicert.com,http://timestamp.sectigo.com"
   artifacts:
     paths: [dist/app.exe]</pre>
+  <ul class="tight col">
+    <li><b><code>--certfile</code> embeds the chain.</b> Cloud key stores and HSMs often give jsign only your certificate. Without the intermediate CA in the signature, the file validates only on PCs that already have that intermediate, and shows an "incomplete chain" everywhere else. <code>CHAIN_PEM</code> is a File-type CI variable with your certificate plus the intermediates.</li>
+    <li><b><code>osslsigncode verify</code> isn't enough as a gate.</b> It reports a missing timestamp but doesn't fail on it. <code>verify-signature.sh</code> (section 07) reads the signature and fails explicitly.</li>
+  </ul>
 
   <h3>Hardening checklist</h3>
   <ul class="checklist col">
@@ -413,11 +457,218 @@ DAYS=$(( ($(date -d "$EXP" +%s) - $(date +%s)) / 86400 ))
     <li>Use GitLab OIDC (<code>id_tokens</code>) instead of long-lived secrets. Give the signing identity permission to sign and nothing else.</li>
     <li>Sign only what this pipeline built: build, then sign, then verify. Keep HSM and cloud audit logs so every signature traces back to a pipeline run.</li>
     <li>Sign everything you ship: the executable, every DLL, and the MSI or installer. Always timestamp.</li>
+    <li>Sign PowerShell scripts you ship as well. Files an installer extracts carry no Mark of the Web, so <code>RemoteSigned</code> won't stop an unsigned or altered script.</li>
+    <li>Embed the full certificate chain (<code>--certfile</code>), and verify the timestamp and chain on every signed file before publishing.</li>
+    <li>Never change a file after signing it: compression (UPX), resource editing or re-packing breaks the signature. Sign inner files before embedding them, and the installer last (section 09).</li>
     <li>On the download site, serve over HTTPS and publish SHA-256 hashes next to each file.</li>
+  </ul>
+
+  <h3>If the signing key is compromised</h3>
+  <ol class="tight col">
+    <li><b>Stop signing.</b> Disable the signing identity and the protected environment so no further signatures can be made.</li>
+    <li><b>Ask the CA to revoke</b> the certificate, giving the earliest date the key may have been misused. Releases timestamped <i>before</i> the revocation date stay valid; everything after it fails.</li>
+    <li><b>Find out what was signed.</b> Go through the HSM and cloud audit logs and the pipeline history to list every signature made with the key.</li>
+    <li><b>Get a new key and certificate</b> (new key in the HSM; never reuse the old one).</li>
+    <li><b>Re-sign and timestamp every supported release</b> from trusted sources, re-publish them, and update the published SHA-256 hashes.</li>
+    <li><b>Tell customers</b> which versions are affected, and give them the new certificate details so their IT teams can update allow-lists (section 10).</li>
+  </ol>
+</section>
+
+<section id="timestamp">
+  <h2><span class="n">07</span>Timestamping in practice</h2>
+  <p class="col">A TSA URL in the pipeline configuration doesn't prove a file is timestamped. The timestamp exists only if the signing tool reached the TSA and stored its signed reply inside the signature, as an RFC 3161 token or a legacy countersignature. If that request was skipped or failed, there's no timestamp, whatever the configuration says. <b>Check the signed file.</b></p>
+  <div class="tbl"><table>
+    <thead><tr><th>Setting</th><th>Use</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td><code>--tsaurl</code></td><td>Two or more URLs, comma-separated: <code>http://timestamp.digicert.com,http://timestamp.sectigo.com</code></td><td>jsign tries them in order, so one TSA outage doesn't stop a release.</td></tr>
+      <tr><td><code>--tsmode</code></td><td><code>RFC3161</code></td><td>jsign defaults to the older <code>Authenticode</code> format. A TSA that only speaks RFC 3161 rejects that, which looks like a network error.</td></tr>
+      <tr><td><code>--tsretries</code> / <code>--tsretrywait</code></td><td>e.g. <code>5</code> / <code>15</code></td><td>The defaults are 3 retries, 10 seconds apart.</td></tr>
+      <tr><td>jsign Maven plugin</td><td>Always set <code>&lt;tsaurl&gt;</code> and <code>&lt;tsmode&gt;</code></td><td>Since jsign 7.6 the Maven plugin no longer timestamps by default, so an upgrade can silently drop timestamps.</td></tr>
+      <tr><td><code>signtool</code></td><td><code>/tr &lt;TSA&gt; /td sha256</code></td><td><code>/t</code> is the legacy format.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>Check the TSA before signing</h3>
+  <p class="col">Sends a real RFC 3161 request to each TSA and stops the job if none grants it. It contains only the hash of 32 random bytes, so nothing about your build leaves the runner.</p>
+  <pre>#!/bin/sh
+# ci/check-tsa.sh "http://tsa1,http://tsa2"
+set -u
+ok=""
+for url in $(echo "$1" | tr ',' ' '); do
+  head -c 32 /dev/urandom &gt; /tmp/probe.bin
+  openssl ts -query -data /tmp/probe.bin -sha256 -cert -out /tmp/probe.tsq
+  if curl -fsS --max-time 15 ${PROXY_URL:+--proxy "$PROXY_URL"} \
+       -H "Content-Type: application/timestamp-query" \
+       --data-binary @/tmp/probe.tsq -o /tmp/probe.tsr "$url" \
+     &amp;&amp; openssl ts -reply -in /tmp/probe.tsr -text | grep -q 'Status: Granted'; then
+    echo "TSA OK:     $url"; ok=1
+  else
+    echo "TSA FAILED: $url"
+  fi
+done
+[ -n "$ok" ] || { echo "No timestamp authority reachable - refusing to sign."; exit 1; }</pre>
+
+  <h3>Verify every signed file</h3>
+  <p class="col">Reads the signature that ended up in each file. It fails if there's no timestamp (RFC 3161 OID <code>1.3.6.1.4.1.311.3.3.1</code>, or a legacy <code>countersignature</code>) or if only one certificate is embedded. Tested against Git for Windows (RFC 3161, 4 certificates), Chrome (legacy, 5 certificates) and an untimestamped file with 1 certificate, which it rejected.</p>
+  <pre>#!/bin/sh
+# ci/verify-signature.sh &lt;file.exe&gt; [&lt;file2.exe&gt; ...]
+set -eu
+[ "$#" -gt 0 ] || { echo "No files to verify"; exit 1; }
+for f in "$@"; do
+  osslsigncode extract-signature -pem -in "$f" -out /tmp/sig.pem \
+    || { echo "FAIL: $f is not signed"; exit 1; }
+  if openssl pkcs7 -in /tmp/sig.pem -print | grep -Eq '1\.3\.6\.1\.4\.1\.311\.3\.3\.1|countersignature'; then
+    echo "OK:   $f is timestamped"
+  else
+    echo "FAIL: $f has no timestamp"; exit 1
+  fi
+  n=$(openssl pkcs7 -in /tmp/sig.pem -print_certs | grep -c '^subject=')
+  [ "$n" -ge 2 ] || { echo "FAIL: $f has only $n certificate - pass the full chain with --certfile"; exit 1; }
+  echo "OK:   $f has $n certificates embedded"
+done</pre>
+  <ul class="tight col">
+    <li><b>Never fall back to signing without a timestamp.</b> That file works until the certificate expires, then fails on every PC. Let the job fail instead.</li>
+    <li><b>Add a timestamp later</b>, without re-signing, while the certificate is still valid: <code>jsign timestamp --tsaurl … --tsmode RFC3161 app.exe</code> (jsign 7.0+) or <code>signtool timestamp /tr … /td sha256 app.exe</code>. After expiry only re-signing helps, because a timestamp would prove the signing happened after expiry.</li>
   </ul>
 </section>
 
-<footer>Reflects CA/Browser Forum rules and Microsoft behaviour as of October 2026. Confirm the specifics with your CA before relying on them: maximum validity, Trusted Signing eligibility and accepted HSMs all change.</footer>
+<section id="tsa">
+  <h2><span class="n">08</span>When the TSA can't be reached</h2>
+  <p class="col">Timestamping is the only step in signing that has to reach a server outside your network. When it fails, check these, roughly from the most to the least common cause:</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Watch for</th><th>Why it happens</th><th>What to do</th></tr></thead>
+    <tbody>
+      <tr><td><b>Outbound port 80 blocked</b></td><td>Most public TSAs use plain HTTP. Many runner networks only allow 443. HTTP is fine here: the TSA's reply is signed, so it can't be tampered with in transit.</td><td>Allow outbound HTTP to the TSA hosts, or use a TSA that offers HTTPS.</td></tr>
+      <tr><td><b>Java ignores the proxy variables</b></td><td>Runners often set <code>HTTP_PROXY</code> / <code>NO_PROXY</code>. <code>curl</code> uses them; <b>Java, and so jsign, does not</b>. The TSA check can pass while jsign then fails.</td><td>Pass <code>--proxyUrl</code> (and <code>--proxyUser</code>/<code>--proxyPass</code>), or set <code>JAVA_TOOL_OPTIONS="-Dhttp.proxyHost=… -Dhttps.proxyHost=…"</code>. The Maven plugin takes the proxy from <code>settings.xml</code>.</td></tr>
+      <tr><td><b>TLS inspection</b> on an HTTPS TSA</td><td>A corporate proxy re-signs HTTPS traffic with a CA Java doesn't trust: <code>PKIX path building failed</code>.</td><td>Add the proxy's root CA to the image's Java trust store (<code>keytool -importcert -cacerts …</code>), or use the HTTP URL.</td></tr>
+      <tr><td><b>Wrong <code>--tsmode</code></b></td><td>jsign defaults to Authenticode; an RFC 3161-only TSA rejects it.</td><td>Always pass <code>--tsmode RFC3161</code>.</td></tr>
+      <tr><td><b>DNS</b></td><td>Isolated runners may not resolve public names.</td><td><code>getent hosts timestamp.digicert.com</code> in the job shows it at once.</td></tr>
+      <tr><td><b>Throttling</b></td><td>Public TSAs limit bursts, for example many parallel jobs each signing one file.</td><td>Sign all files in one jsign call, keep retries, and list a second TSA as a fallback.</td></tr>
+      <tr><td><b>Job timeout</b></td><td>Each failing URL costs up to retries × wait seconds before the next one is tried.</td><td>Size the job's <code>timeout:</code> for that, or use fewer retries with several URLs.</td></tr>
+      <tr><td><b>Internal TSA not trusted by clients</b></td><td>The request succeeds, but customers' PCs don't trust the TSA's certificate, so Windows ignores the timestamp.</td><td>Use a public TSA for software you ship to customers.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="nested">
+  <h2><span class="n">09</span>Several executables in one installer</h2>
+  <p class="col">When an installer carries other programs (Go <code>go:embed</code>, an MSI, a self-extracting archive), there are two layers of signatures, and the order is fixed: <b>inner files first, installer last</b>. Embedding copies the bytes at build time, so a file signed after embedding stays unsigned inside the installer. Signing the installer changes nothing inside it; it adds the outer signature over everything.</p>
+  <ol class="flow" aria-label="Signing order for an installer with embedded executables">
+    <li><b>Build</b><span>agent.exe, updater.exe, …</span></li>
+    <li><b>Sign each</b><span>inner signatures, timestamped</span></li>
+    <li><b>Verify each</b><span>stop before embedding if any fails</span></li>
+    <li><b>Embed</b><span>go build the installer</span></li>
+    <li><b>Sign installer</b><span>outer signature, then verify</span></li>
+  </ol>
+  <h3>Extracted files have no Mark of the Web</h3>
+  <p class="col">The downloaded installer has a Mark of the Web; the programs it writes don't. Windows doesn't pass the mark on to files a program creates (tested with a Go installer). That's normal for all installers, and it changes which checks apply:</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Check</th><th>Downloaded installer</th><th>Extracted programs</th></tr></thead>
+    <tbody>
+      <tr><td>SmartScreen reputation</td><td>Checked</td><td><span class="pill warn">Never checked</span></td></tr>
+      <tr><td>Smart App Control, App Control (WDAC), AppLocker</td><td>Checked</td><td><span class="pill ok">Checked</span> on every launch; they don't depend on the mark</td></tr>
+      <tr><td>Defender / EDR</td><td>Scanned</td><td>Scanned, like any installed software</td></tr>
+      <tr><td>UAC prompt</td><td>Publisher from the signature</td><td>Publisher from the signature</td></tr>
+    </tbody>
+  </table></div>
+  <ul class="tight col">
+    <li><b>The inner signatures carry the trust after installation.</b> Sign and timestamp every embedded exe and DLL. After the certificate expires, an untimestamped inner exe is blocked by Smart App Control and fails your updater's signature checks.</li>
+    <li><b>Extract to Program Files</b>, not <code>%TEMP%</code> or Downloads. Nothing will warn later if someone replaces an extracted file or plants a DLL next to it.</li>
+    <li><b>Don't add the mark to installed files yourself.</b> Every launch would trigger SmartScreen, and users learn to click through warnings.</li>
+    <li>In managed environments, IT can make the installer a <b>WDAC managed installer</b>: every file it writes is then tagged and allowed automatically.</li>
+  </ul>
+  <h3>Maven: phases in the right order</h3>
+  <p class="col">Plugins bound to the same Maven phase run in the order they're declared, so give each step its own phase and declare <code>jsign-maven-plugin</code> before <code>exec-maven-plugin</code>. One execution with a <code>&lt;fileset&gt;</code> signs all inner files.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Phase</th><th>Plugin</th><th>Step</th></tr></thead>
+    <tbody>
+      <tr><td><code>clean</code></td><td>clean</td><td>Empty the payload folder, so a stale unsigned exe can never be embedded</td></tr>
+      <tr><td><code>initialize</code></td><td>exec</td><td><code>check-tsa.sh</code></td></tr>
+      <tr><td><code>compile</code></td><td>exec</td><td><code>go build -o installer/payload/ ./cmd/...</code></td></tr>
+      <tr><td><code>prepare-package</code></td><td>jsign</td><td>Sign every file in the payload folder</td></tr>
+      <tr><td><code>package</code></td><td>exec</td><td>Verify the payload, then <code>go build</code> the installer</td></tr>
+      <tr><td><code>verify</code></td><td>jsign, then exec</td><td>Sign the installer, then verify it</td></tr>
+    </tbody>
+  </table></div>
+  <pre>&lt;execution&gt;
+  &lt;id&gt;sign-payload&lt;/id&gt;
+  &lt;phase&gt;prepare-package&lt;/phase&gt;
+  &lt;goals&gt;&lt;goal&gt;sign&lt;/goal&gt;&lt;/goals&gt;
+  &lt;configuration&gt;
+    &lt;fileset&gt;
+      &lt;directory&gt;${payload.dir}&lt;/directory&gt;
+      &lt;includes&gt;&lt;include&gt;*.exe&lt;/include&gt;&lt;include&gt;*.dll&lt;/include&gt;&lt;/includes&gt;
+    &lt;/fileset&gt;
+  &lt;/configuration&gt;
+&lt;/execution&gt;
+&lt;!-- shared plugin configuration: &lt;algorithm&gt;SHA-256&lt;/algorithm&gt;, &lt;certfile&gt;, &lt;tsaurl&gt;,
+     &lt;tsmode&gt;RFC3161&lt;/tsmode&gt;, &lt;storepass&gt;mvn:code-signing&lt;/storepass&gt; (password from settings.xml) --&gt;</pre>
+  <p class="col">The jsign Maven plugin has no proxy settings of its own; it uses the proxy in Maven's <code>settings.xml</code>. The full <code>pom.xml</code>, the installer code, <code>settings.xml</code> and the GitLab job are in <a href="../Test-ExecutableSignature.md#maven-signing-several-executables-embedded-in-a-go-installer">Test-ExecutableSignature.md</a>.</p>
+</section>
+
+<section id="allowlist">
+  <h2><span class="n">10</span>Version info and allow-listing</h2>
+  <p class="col">Your customers' IT teams allow your software with App Control (WDAC) or AppLocker rules. Those rules match more than the certificate: they also use fields from the version information compiled into each file. Keep those fields stable, or every release breaks your customers' rules.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Field</th><th>Used by</th><th>Keep it</th></tr></thead>
+    <tbody>
+      <tr><td>Certificate subject (your organization)</td><td>WDAC Publisher and FilePublisher rules; AppLocker publisher rules</td><td>The same legal name across renewals</td></tr>
+      <tr><td>Issuing CA (intermediate)</td><td>WDAC Publisher and FilePublisher rules</td><td>Changing CA means customers must update their rules; tell them in advance</td></tr>
+      <tr><td><code>OriginalFilename</code></td><td>WDAC FilePublisher rules; AppLocker file name</td><td>Stable for each program; never reused for a different program</td></tr>
+      <tr><td><code>FileVersion</code></td><td>WDAC FilePublisher minimum version; AppLocker version range</td><td>Always increasing</td></tr>
+      <tr><td><code>ProductName</code></td><td>AppLocker publisher rules</td><td>Stable</td></tr>
+      <tr><td><code>CompanyName</code></td><td>Shown to users; compared with the signer by <code>Test-ExecutableSignature.ps1</code></td><td>The organization in your certificate</td></tr>
+    </tbody>
+  </table></div>
+  <h3>An allow-listing note for customers</h3>
+  <p class="col">Publish this with each major release, so customers' IT teams don't have to work it out themselves:</p>
+  <ul class="tight col">
+    <li>Certificate subject, issuing CA and root CA, and the thumbprint of the current certificate and its expiry date.</li>
+    <li>The <code>OriginalFilename</code> of every program you ship, and the first version covered.</li>
+    <li>Whether the installer is suitable as a WDAC <b>managed installer</b>.</li>
+    <li>Ready-made rule commands:</li>
+  </ul>
+  <pre># App Control (WDAC) rule: publisher + file name + minimum version, hash as a fallback
+# (needs the ConfigCI module, which not every Windows edition has)
+New-CIPolicyRule -DriverFilePath .\app.exe -Level FilePublisher -Fallback Hash
+
+# AppLocker publisher rule
+Get-AppLockerFileInformation -Path .\app.exe |
+  New-AppLockerPolicy -RuleType Publisher -User Everyone -Xml</pre>
+</section>
+
+<section id="release-check">
+  <h2><span class="n">11</span>Checking a release on Windows</h2>
+  <p class="col">Three PowerShell scripts in this repository check a file without running it. Use them as a release gate on a Windows runner, and point customers to them.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Script</th><th>Checks</th><th>Who acts on it</th></tr></thead>
+    <tbody>
+      <tr><td><a href="../Test-ExecutableSignature.md"><code>Test-ExecutableSignature.ps1</code></a></td><td>Signature, certificate, timestamp, chain, revocation, publisher identity. Prints the days left until an untimestamped signature expires.</td><td>The publisher: every finding comes with the fix</td></tr>
+      <tr><td><a href="../Test-ExecutableEnvironment.md"><code>Test-ExecutableEnvironment.ps1</code></a></td><td>Hash, Mark of the Web, Defender scan, App Control and Smart App Control prediction, permissions</td><td>The user, or their IT team</td></tr>
+      <tr><td><a href="../Test-ExecutableSafety.md"><code>Test-ExecutableSafety.ps1</code></a></td><td>Both together, in one report</td><td>-</td></tr>
+    </tbody>
+  </table></div>
+  <h3>As a release gate</h3>
+  <pre>release-check:
+  stage: verify
+  tags: [windows]
+  needs: [sign]
+  script:
+    - powershell -ExecutionPolicy Bypass -File .\Test-ExecutableSignature.ps1
+        -Path dist\app.exe -ExpectedPublisher "Your Company Ltd" -ReportPath signature-report.json
+  allow_failure:
+    exit_codes: [1]          # 1 = warnings; 2 = failures stop the release
+  artifacts:
+    when: always
+    paths: [signature-report.json]</pre>
+  <ul class="tight col">
+    <li>Exit code <code>2</code> (a broken, untrusted, untimestamped-and-expired or revoked signature) fails the job. Exit code <code>1</code> lets it pass with a warning.</li>
+    <li>Check the installer <b>and</b> each embedded program: run the installer into a test folder first.</li>
+    <li>For customers who report a blocked install, <code>Test-ExecutableEnvironment.ps1</code> shows whether App Control, Smart App Control or Defender is the cause, and what their IT team can do.</li>
+  </ul>
+</section>
+
+<footer>Reflects CA/Browser Forum rules, Microsoft behaviour and jsign 7.6 as of November 2026. Confirm the specifics with your CA before relying on them: maximum validity, Trusted Signing eligibility and accepted HSMs all change.</footer>
 </div>
 
 <script>
