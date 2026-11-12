@@ -15,9 +15,11 @@ A PowerShell script that checks a downloaded Windows executable **before you run
   - [5. File permissions](#5-file-permissions)
 - [Mark of the Web explained](#mark-of-the-web-explained)
 - [Worked example](#worked-example)
+- [Runtime impact of a missing timestamp](#runtime-impact-of-a-missing-timestamp)
 - [Fixing it at the source: jsign on a GitLab Linux runner](#fixing-it-at-the-source-jsign-on-a-gitlab-linux-runner)
   - [When the TSA URL is not reachable](#when-the-tsa-url-is-not-reachable)
   - [Maven: signing several executables embedded in a Go installer](#maven-signing-several-executables-embedded-in-a-go-installer)
+    - [Embedded executables have no Mark of the Web](#embedded-executables-have-no-mark-of-the-web)
 - [Limitations](#limitations)
 
 ## Quick start
@@ -110,7 +112,7 @@ It also reports whether the signature is **embedded** (Authenticode) or comes fr
 **Certificate details.** The signer, subject, issuer, validity dates and thumbprint are printed. Extra checks:
 - **New certificate.** A certificate issued less than 30 days ago is a WARN. Attackers sometimes buy fresh certificates for a campaign.
 - **EV certificate.** If the certificate carries policy OID `2.23.140.1.3`, it's an Extended Validation code-signing certificate. The CA verified the company's identity strictly. Reported as PASS.
-- **Timestamp.** A timestamp from a trusted timestamp authority (TSA) proves *when* the file was signed, so the signature stays valid after the certificate expires. No timestamp is a WARN. No timestamp *and* an expired certificate is a FAIL. See [How the timestamp is detected](#how-the-timestamp-is-detected).
+- **Timestamp.** A timestamp from a trusted timestamp authority (TSA) proves *when* the file was signed, so the signature stays valid after the certificate expires. No timestamp is a WARN. No timestamp *and* an expired certificate is a FAIL. See [How the timestamp is detected](#how-the-timestamp-is-detected) and [Runtime impact of a missing timestamp](#runtime-impact-of-a-missing-timestamp).
 
 #### How the timestamp is detected
 
@@ -235,6 +237,8 @@ HostUrl=https://cdn.example.com/files/setup.exe
 
 **Who reads it.** SmartScreen ("Windows protected your PC"), Smart App Control, Office Protected View and macro blocking, PowerShell's `RemoteSigned` execution policy, and Explorer's *Unblock* checkbox.
 
+**Not passed on to extracted or installed files.** Files a program writes, such as an installer extracting its payload, don't get the mark. See [Embedded executables have no Mark of the Web](#embedded-executables-have-no-mark-of-the-web).
+
 **How it's lost.**
 - `Unblock-File` or Properties → Unblock deletes it.
 - Copying to FAT32 or exFAT drives or some network shares drops it, because those have no alternate streams.
@@ -276,6 +280,61 @@ What this says:
 - The file is signed, but by a company-internal CA ("Example Corp Internal CA UAT 1") that isn't trusted on this PC. "UAT" normally means a test environment. The file is probably meant for machines that have the company's root certificate installed.
 - Nothing malicious was found, and nothing on this PC would block it.
 - **Right action:** confirm with the vendor that this is the correct download and get the official hash or root certificate from them. Don't install an unknown root certificate yourself just to make the check pass; a root certificate is trusted for everything on the PC.
+
+## Runtime impact of a missing timestamp
+
+**While the signing certificate is valid, a missing timestamp makes no difference.** It only matters once the certificate is past its expiry date (`NotAfter`), or if the certificate is revoked.
+
+Without a timestamp, Windows checks the signature against **today's date**. After expiry it finds an expired certificate and nothing proving the file was signed while the certificate was valid. The signature then counts as **invalid** (`CERT_E_EXPIRED`, `0x800B0101`).
+
+The file itself isn't damaged. Windows treats it like an unsigned file, so whether it still runs depends on what checks it.
+
+### What happens after expiry
+
+| Component | Effect when the signature is invalid |
+|---|---|
+| **Normal launch** (double-click, `CreateProcess`) | **Still runs.** Windows doesn't require a valid signature to start an ordinary exe. |
+| **SmartScreen** (files with Mark of the Web) | Treated as an unknown publisher. Reputation earned by the certificate no longer helps, so "Windows protected your PC" is more likely. Users can still click *Run anyway* unless policy forbids it. |
+| **UAC prompt** (installers and tools needing admin) | Yellow **"Publisher: Unknown"** prompt instead of the blue verified-publisher prompt. Elevation is still allowed by default. |
+| **UAC "Only elevate executables that are signed and validated"** (registry `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\ValidateAdminCodeSignatures = 1`) | **Blocked from elevating.** Off by default; some managed company builds turn it on. |
+| **Smart App Control** | **Blocked**, unless Microsoft's cloud already rates the file as safe. It needs a valid signature or good reputation. |
+| **App Control for Business (WDAC)** | **Usually still allowed.** By default, Code Integrity doesn't reject a signature because its certificate expired, so publisher rules keep matching. See the exceptions below. |
+| **AppLocker publisher rules** | Generally keep matching the publisher name. Test this if your environment relies on it. |
+| **Antivirus / EDR** | An invalid signature raises the file's risk score. Rules like "invalid signature running from a user folder" may alert on it or block it. |
+| **Your own install or update code** | Anything that checks signatures (`WinVerifyTrust`, `Get-AuthenticodeSignature`, an updater confirming a download is genuine) **fails.** Auto-updates can stop working on the expiry date. |
+| **Explorer → Properties → Digital Signatures** | "This digital signature is not valid." |
+| **`Test-ExecutableSafety.ps1`** | FAIL: "Certificate has expired and there is no timestamp." |
+
+WDAC *does* reject the file when:
+- The policy enables rule option **20, `Enabled:Revoked Expired As Unsigned`**. Files signed with a revoked certificate, or with an expired certificate that carries the *Lifetime Signing* EKU (`1.3.6.1.4.1.311.10.3.13`), are then treated as unsigned.
+- The policy has no publisher rule for the signer at all, and only allows files by hash, by managed installer, or by Microsoft's reputation service (ISG).
+
+A certificate with the Lifetime Signing EKU expires its signatures with the certificate **even when they are timestamped**. Check its EKUs (the script shows the certificate; `certutil -dump` or Explorer's certificate details list them). Code-signing certificates normally carry only Code Signing (`1.3.6.1.5.5.7.3.3`).
+
+### Revocation: a bigger risk than expiry
+
+If the CA **revokes** the signing certificate, for example after a key compromise or when the certificate is retired:
+
+| | Effect |
+|---|---|
+| **With a timestamp** | Files signed *before* the revocation date stay valid. Only files signed after it become invalid. |
+| **Without a timestamp** | **Every file ever signed with that certificate becomes invalid at once.** Windows can't tell which files were signed before the problem. |
+
+Smart App Control, SmartScreen and EDR react straight away, and WDAC does too if option 20 is enabled. This can happen at any time, not just on the expiry date.
+
+### Timeline for an untimestamped file
+
+| Period | What happens |
+|---|---|
+| Signing date until the certificate's `NotAfter` | No difference from a timestamped file, as long as the certificate chains to a trusted root. |
+| After `NotAfter` | Smart App Control blocks it. Signature checks in install and update code fail. UAC shows "Unknown publisher". SmartScreen and EDR treat it as unsigned. Under a WDAC publisher rule, without option 20, it most likely still runs. |
+| Any time the certificate is revoked | All of the above, immediately, for every file signed with it. |
+
+### What to do
+
+- **Before the certificate expires:** add a timestamp without re-signing, using `jsign timestamp ...` (jsign 7.0+) or `signtool timestamp /tr <TSA url> /td sha256 <file>`. Then check it with `verify-signature.sh` or `Test-ExecutableSafety.ps1`.
+- **After it has expired:** a timestamp can no longer help, because it would prove signing happened after expiry. Re-sign the file with a valid certificate and a timestamp, and ship it again.
+- **Check ahead of time:** look for an expiry date on untimestamped release files in your build or release checklist. To see the effect, set a test VM's clock past `NotAfter` and run `Test-ExecutableSafety.ps1`, `signtool verify /pa /v`, or the installer itself.
 
 ## Fixing it at the source: jsign on a GitLab Linux runner
 
@@ -711,7 +770,33 @@ func install(dest string) error {
 
 Install into a folder only administrators can write to, such as `C:\Program Files\<Product>`, not `%TEMP%` or Downloads. Otherwise another user or process could replace an extracted exe or plant a DLL next to it before it runs. This is the same risk `Test-ExecutableSafety.ps1` checks for.
 
-Extracted files carry no Mark of the Web, so SmartScreen won't check them again. App Control and Smart App Control still check their signatures, which is why the inner signatures matter.
+Extracted files carry no Mark of the Web, so SmartScreen won't check them again. App Control and Smart App Control still check their signatures, which is why the inner signatures matter. See [Embedded executables have no Mark of the Web](#embedded-executables-have-no-mark-of-the-web).
+
+#### Embedded executables have no Mark of the Web
+
+The downloaded installer has a Mark of the Web; the programs it extracts don't. Go's `os.WriteFile` doesn't copy the `Zone.Identifier` stream, and Windows doesn't pass it on to files a program creates. Tested: a `setup.exe` with `ZoneId=3` extracted `agent.exe` and `updater.exe` that had only their normal `:$DATA` stream.
+
+**This is normal.** Windows Installer (MSI) and other installers behave the same way. The mark protects the *download*. Once the user has accepted the installer, trust passes from the installer to what it installs.
+
+| Check | Downloaded installer (has the mark) | Embedded exes after extraction (no mark) |
+|---|---|---|
+| **SmartScreen** reputation check ("Windows protected your PC") | Checked when launched from Explorer | **Never checked** |
+| **"Open File – Security Warning"** prompt | Can appear | Never appears |
+| **Smart App Control** | Checked | **Still checked** on every launch; it doesn't depend on the mark |
+| **WDAC / App Control for Business** | Checked | **Still checked**; it doesn't depend on the mark |
+| **AppLocker** | Checked | Still checked |
+| **Defender / EDR** | Scanned on write and on launch | Scanned on write and on launch, like normal installed software |
+| **UAC prompt** (if it needs admin) | Shows the publisher from the signature | Same; it depends only on the signature |
+| **`Test-ExecutableSafety.ps1`** | Shows the source URL | WARN "No Mark of the Web", which is expected here |
+
+What this means:
+
+1. **The installer is the only file SmartScreen checks.** Its outer signature and reputation carry the whole download. A file signed by an EV certificate, or one with an established signing reputation, gets through SmartScreen most easily.
+2. **The inner signatures do the work afterwards.** From the moment of extraction, only signature-based checks protect the embedded exes: Smart App Control, WDAC, EDR, and your updater's own signature check. That's why each embedded exe must be signed **and timestamped**. After the certificate expires, a payload exe without a timestamp is still not re-checked by SmartScreen, but **is blocked by Smart App Control**, fails signature checks in your updater, and looks suspicious to EDR. See [Runtime impact of a missing timestamp](#runtime-impact-of-a-missing-timestamp).
+3. **Where you extract matters more.** Nothing will warn about these files later. If they land in a folder other users can write to (`%TEMP%`, Downloads), someone could replace them or plant a DLL, and no prompt would catch it. Extract to Program Files.
+4. **WDAC managed installer.** In a managed company environment, IT can designate the installer as a *managed installer*. Every file it writes is then tagged (in an NTFS extended attribute) and allowed by WDAC automatically. That's the WDAC way of passing on trust, instead of the mark.
+5. **Don't add the mark to installed files yourself.** Every launch of your installed programs would then trigger SmartScreen or the security warning. Users would learn to click through warnings, and your own updater could break.
+6. **Scripts are a special case.** If the payload contained `.ps1`, `.js` or Office files, they would also arrive without the mark. PowerShell's `RemoteSigned` wouldn't block an unsigned script, and Office wouldn't open a document in Protected View. Sign PowerShell scripts too, or keep the payload to signed exes and DLLs.
 
 #### ci/settings.xml
 
