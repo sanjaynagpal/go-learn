@@ -2,10 +2,14 @@ package main
 
 import (
 	"crypto/tls"
+	"encoding/csv"
 	"encoding/json"
+	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -55,6 +59,14 @@ func checkTLS(target string, wg *sync.WaitGroup, results chan<- Result) {
 }
 
 func main() {
+	format := flag.String("format", "json", "output format: json or csv")
+	flag.Parse()
+	*format = strings.ToLower(*format)
+	if *format != "json" && *format != "csv" {
+		fmt.Fprintf(os.Stderr, "invalid -format %q: must be json or csv\n", *format)
+		os.Exit(2)
+	}
+
 	targets := []string{
 		"swiskey-execution.ibb.ubs.com:443",
 		"swiskey-execds1.ibb.ubs.com:443",
@@ -70,8 +82,6 @@ func main() {
 	resultsChan := make(chan Result, len(targets))
 	var wg sync.WaitGroup
 
-	fmt.Fprintln(os.Stderr, "Scanning targets...")
-
 	for _, t := range targets {
 		wg.Add(1)
 		go checkTLS(t, &wg, resultsChan)
@@ -85,14 +95,38 @@ func main() {
 
 	var finalReport []Result
 	for r := range resultsChan {
-		finalReport = append(finalReport)
 		finalReport = append(finalReport, r)
 	}
 
-	// Output as JSON
-	encoder := json.NewEncoder(os.Stdout)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(finalReport); err != nil {
-		fmt.Printf("Error encoding JSON: %v\n", err)
+	var err error
+	switch *format {
+	case "csv":
+		err = writeCSV(os.Stdout, finalReport)
+	default:
+		err = writeJSON(os.Stdout, finalReport)
 	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error writing %s output: %v\n", *format, err)
+		os.Exit(1)
+	}
+}
+
+func writeJSON(w io.Writer, results []Result) error {
+	encoder := json.NewEncoder(w)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(results)
+}
+
+func writeCSV(w io.Writer, results []Result) error {
+	cw := csv.NewWriter(w)
+	if err := cw.Write([]string{"target", "status", "protocol", "cipher", "expiry", "error"}); err != nil {
+		return err
+	}
+	for _, r := range results {
+		if err := cw.Write([]string{r.Target, r.Status, r.Protocol, r.Cipher, r.Expiry, r.Error}); err != nil {
+			return err
+		}
+	}
+	cw.Flush()
+	return cw.Error()
 }
