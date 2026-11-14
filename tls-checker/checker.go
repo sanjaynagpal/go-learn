@@ -16,18 +16,24 @@ import (
 
 // Target defines the input and Result defines the JSON output structure
 type Result struct {
-	Target   string `json:"target"`
-	Status   string `json:"status"`
-	Protocol string `json:"protocol"`
-	Cipher   string `json:"cipher"`
-	Expiry   string `json:"expiry,omitempty"`
-	Error    string `json:"error,omitempty"`
+	Target    string `json:"target"`
+	CheckedAt string `json:"checked_at"`
+	IP        string `json:"ip,omitempty"`
+	Status    string `json:"status"`
+	Protocol  string `json:"protocol"`
+	Cipher    string `json:"cipher"`
+	Expiry    string `json:"expiry,omitempty"`
+	Error     string `json:"error,omitempty"`
 }
 
 func checkTLS(target string, wg *sync.WaitGroup, results chan<- Result) {
 	defer wg.Done()
 
-	res := Result{Target: target, Status: "failed"}
+	res := Result{
+		Target:    target,
+		Status:    "failed",
+		CheckedAt: time.Now().Format(time.RFC3339),
+	}
 
 	// Set a timeout so we don't hang on dead hosts
 	dialer := &net.Dialer{Timeout: 5 * time.Second}
@@ -39,10 +45,21 @@ func checkTLS(target string, wg *sync.WaitGroup, results chan<- Result) {
 
 	if err != nil {
 		res.Error = err.Error()
+		// Connection failed; still report what the hostname resolves to, if anything
+		if host, _, splitErr := net.SplitHostPort(target); splitErr == nil {
+			if addrs, lookupErr := net.LookupHost(host); lookupErr == nil && len(addrs) > 0 {
+				res.IP = addrs[0]
+			}
+		}
 		results <- res
 		return
 	}
 	defer conn.Close()
+
+	// The address actually connected to
+	if ta, ok := conn.RemoteAddr().(*net.TCPAddr); ok {
+		res.IP = ta.IP.String()
+	}
 
 	state := conn.ConnectionState()
 
@@ -119,11 +136,11 @@ func writeJSON(w io.Writer, results []Result) error {
 
 func writeCSV(w io.Writer, results []Result) error {
 	cw := csv.NewWriter(w)
-	if err := cw.Write([]string{"target", "status", "protocol", "cipher", "expiry", "error"}); err != nil {
+	if err := cw.Write([]string{"target", "checked_at", "ip", "status", "protocol", "cipher", "expiry", "error"}); err != nil {
 		return err
 	}
 	for _, r := range results {
-		if err := cw.Write([]string{r.Target, r.Status, r.Protocol, r.Cipher, r.Expiry, r.Error}); err != nil {
+		if err := cw.Write([]string{r.Target, r.CheckedAt, r.IP, r.Status, r.Protocol, r.Cipher, r.Expiry, r.Error}); err != nil {
 			return err
 		}
 	}
